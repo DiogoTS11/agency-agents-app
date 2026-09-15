@@ -406,7 +406,7 @@ const en = {
   "coverage.sliceAria": "{division}: {count} in {tool}",
   "coverage.openTool": "Open {tool} in Tools",
   "category.academic": "Academic",
-  "category.design": "Design",
+  "category.design": "Design DF",
   "category.engineering": "Engineering",
   "category.finance": "Finance",
   "category.game-development": "Game Development",

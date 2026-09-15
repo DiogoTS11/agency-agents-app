@@ -368,7 +368,7 @@ const ja = {
   "coverage.sliceAria": "{division}: {count} の {tool}",
   "coverage.openTool": "ツールで {tool} を開きます",
   "category.academic": "学術",
-  "category.design": "デザイン",
+  "category.design": "デザイン DF",
   "category.engineering": "エンジニアリング",
   "category.finance": "ファイナンス",
   "category.game-development": "ゲーム開発",

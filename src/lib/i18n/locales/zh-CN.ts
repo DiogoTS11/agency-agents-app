@@ -368,7 +368,7 @@ const zhCN = {
   "coverage.sliceAria": "{division}：{tool} 中 {count} 个",
   "coverage.openTool": "在工具中打开{tool}",
   "category.academic": "学术",
-  "category.design": "设计",
+  "category.design": "设计 DF",
   "category.engineering": "工程",
   "category.finance": "金融",
   "category.game-development": "游戏开发",

@@ -368,7 +368,7 @@ const es = {
   "coverage.sliceAria": "{division}: {count} en {tool}",
   "coverage.openTool": "Abra {tool} en Herramientas",
   "category.academic": "Académico",
-  "category.design": "Diseño",
+  "category.design": "Diseño DF",
   "category.engineering": "Ingeniería",
   "category.finance": "Finanzas",
   "category.game-development": "Desarrollo de videojuegos",

@@ -368,7 +368,7 @@ const ko = {
   "coverage.sliceAria": "{division}: {count}의 {tool}",
   "coverage.openTool": "도구에서 {tool} 열기",
   "category.academic": "학술",
-  "category.design": "디자인",
+  "category.design": "디자인 DF",
   "category.engineering": "엔지니어링",
   "category.finance": "금융",
   "category.game-development": "게임 개발",

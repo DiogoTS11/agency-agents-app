@@ -368,7 +368,7 @@ const zhTW = {
   "coverage.sliceAria": "{division}：{tool} 中 {count} 個",
   "coverage.openTool": "在工具中開啟{tool}",
   "category.academic": "學術",
-  "category.design": "設計",
+  "category.design": "設計 DF",
   "category.engineering": "工程",
   "category.finance": "財務",
   "category.game-development": "遊戲開發",

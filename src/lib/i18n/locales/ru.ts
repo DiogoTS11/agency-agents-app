@@ -393,7 +393,7 @@ const ru = {
   "coverage.sliceAria": "{division}: {count} в {tool}",
   "coverage.openTool": "Открыть {tool} в инструментах",
   "category.academic": "Академические",
-  "category.design": "Дизайн",
+  "category.design": "Дизайн DF",
   "category.engineering": "Инженерия",
   "category.finance": "Финансы",
   "category.game-development": "Разработка игр",

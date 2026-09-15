@@ -408,7 +408,7 @@ const fa = {
   "coverage.sliceAria": "{division}: {count} در {tool}",
   "coverage.openTool": "باز کردن {tool} در ابزارها",
   "category.academic": "آکادمیک",
-  "category.design": "طراحی",
+  "category.design": "طراحی DF",
   "category.engineering": "مهندسی",
   "category.finance": "مالی",
   "category.game-development": "توسعه بازی",

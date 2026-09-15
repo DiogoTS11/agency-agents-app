@@ -368,7 +368,7 @@ const ptBR = {
   "coverage.sliceAria": "{division}: {count} em {tool}",
   "coverage.openTool": "Abra {tool} em Ferramentas",
   "category.academic": "Acadêmico",
-  "category.design": "Design",
+  "category.design": "Design DF",
   "category.engineering": "Engenharia",
   "category.finance": "Finanças",
   "category.game-development": "Desenvolvimento de jogos",

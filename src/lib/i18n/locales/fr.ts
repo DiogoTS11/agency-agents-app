@@ -368,7 +368,7 @@ const fr = {
   "coverage.sliceAria": "{division} : {count} dans {tool}",
   "coverage.openTool": "Ouvrez {tool} dans Outils",
   "category.academic": "Académique",
-  "category.design": "Design",
+  "category.design": "Design DF",
   "category.engineering": "Ingénierie",
   "category.finance": "Finance",
   "category.game-development": "Développement de jeux",

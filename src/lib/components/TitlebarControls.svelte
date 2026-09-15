@@ -5,20 +5,17 @@
   import Monitor from "@lucide/svelte/icons/monitor";
   import SettingsIcon from "@lucide/svelte/icons/settings";
   import BookOpenIcon from "@lucide/svelte/icons/book-open";
-  import Heart from "@lucide/svelte/icons/heart";
   import Check from "@lucide/svelte/icons/check";
   import GithubMarkIcon from "./GithubMarkIcon.svelte";
 
   import { ui } from "$lib/stores/ui.svelte";
   import { github } from "$lib/stores/github.svelte";
   import { i18n } from "$lib/stores/i18n.svelte";
-  import { safeOpenUrl } from "$lib/util/url";
-  import { SPONSOR_URL } from "$lib/util/donate";
   import { shortcut } from "$lib/util/platform";
   import type { ThemePreference } from "$lib/types";
 
   /**
-   * Title-bar right cluster: theme dropdown + Settings + Donate, grouped
+   * Title-bar right cluster: theme dropdown + Settings, grouped
    * as one rounded pill in the top-right of the window title bar. The
    * theme picker is a single button showing the current theme icon; click
    * opens a small popover with Light / Dark / System.
@@ -55,8 +52,6 @@
       themeBtn?.focus();
     }
   }
-
-  function openSponsor() { void safeOpenUrl(SPONSOR_URL); }
 
   /** GitHub connection status indicator state.
    *
@@ -154,16 +149,6 @@
   >
     <SettingsIcon size={14} />
   </button>
-  <button
-    type="button"
-    class="ctrl donate"
-    onclick={openSponsor}
-    title={i18n.t("titlebar.donateTitle")}
-    aria-label={i18n.t("titlebar.donateLabel")}
-  >
-    <Heart size={14} fill="currentColor" />
-  </button>
-
   {#if themeOpen}
     <div
       bind:this={themePopover}
@@ -255,10 +240,6 @@
     background: var(--color-border);
     opacity: 0.6;
   }
-  /* Pink-filled heart for the Donate button. */
-  .ctrl.donate { color: #ec4899; }
-  .ctrl.donate:hover { color: #db2777; }
-
   /* GitHub connection-status chip. Green = OK, amber = scope-incomplete.
      Both shown at a slightly higher saturation than the muted default
      so they pop without being garish. */

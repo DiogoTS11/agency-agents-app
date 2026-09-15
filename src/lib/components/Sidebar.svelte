@@ -67,8 +67,8 @@
   aria-label={i18n.t("nav.primary")}
 >
   <button class="brand" onclick={() => ui.setSection("personas")} title={i18n.t("nav.homeTitle")}>
-    <span class="brand-mark" aria-hidden="true">🤖</span>
-    <span class="brand-name">Agency Agents</span>
+    <span class="brand-mark" aria-hidden="true">DF</span>
+    <span class="brand-name">DF AG Agency</span>
   </button>
 
   <nav>
@@ -129,7 +129,21 @@
     cursor: pointer;
     text-align: left;
   }
-  .brand-mark { font-size: 18px; line-height: 1; }
+  .brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm, 4px);
+    background: var(--color-brand);
+    color: var(--color-text-inverse);
+    font-size: 10px;
+    font-weight: var(--fw-semibold);
+    letter-spacing: 0.02em;
+    line-height: 1;
+    flex: none;
+  }
   .brand-name { font-weight: var(--fw-semibold); font-size: var(--text-body); }
 
   nav { flex: 1; padding: var(--space-2); overflow-y: auto; }

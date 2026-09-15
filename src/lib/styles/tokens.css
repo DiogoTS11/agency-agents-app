@@ -5,11 +5,16 @@
 
 /* ---------- LIGHT MODE (default) ---------- */
 :root {
-  /* Brand — warm amber, brew-bottle */
-  --color-brand:           oklch(67% 0.15 45);
-  --color-brand-hover:     oklch(62% 0.16 45);
-  --color-brand-active:    oklch(56% 0.16 45);
-  --color-brand-subtle:    oklch(96% 0.03 65);
+  /* Brand — refined Digital Flow green
+     (DF AG Agency visual patch; per docs/command-center/digital-flow-os-visual-decisions.md
+     "Visual Language Foundation": refined Digital Flow green accent. Hue 162 sits clear of
+     --color-success at 150 so brand and success stay distinguishable. Chroma lowered from
+     0.13-0.14 to 0.08-0.09 in the second patch — first pass read as too heavy/saturated
+     wherever brand renders as a solid fill.) */
+  --color-brand:           oklch(58% 0.08 162);
+  --color-brand-hover:     oklch(53% 0.09 162);
+  --color-brand-active:    oklch(47% 0.09 162);
+  --color-brand-subtle:    oklch(95% 0.03 162);
 
   /* Surfaces — layered */
   --color-surface:         oklch(99% 0.003 95);
@@ -44,7 +49,7 @@
      The plain semantic colors fail 4.5:1 on their matching -subtle backgrounds; these "-on-subtle"
      variants pair with `tone-X` pills in Pill.svelte. All clear WCAG 1.4.3 AA. */
   --color-formula-on-subtle: oklch(40% 0.15 250); /* ≈ #1e40af on info-subtle #dbeafe — ~6.0:1 (was 4.3:1) */
-  --color-cask-on-subtle:    oklch(45% 0.13 45);  /* ≈ #7a4708 on brand-subtle #fef3c7 — ~5.0:1 (was 2.9:1) — preserves warm amber */
+  --color-cask-on-subtle:    oklch(42% 0.12 162); /* retuned to the DF green brand hue (was warm amber 45); same L/C contrast intent on the new brand-subtle */
   --color-success-on-subtle: oklch(45% 0.14 150); /* ≈ #166534 on success-subtle #dcfce7 — ~6.0:1 (was borderline 4.6:1) */
   --color-warning-on-subtle: oklch(48% 0.14 75);  /* ≈ #854d0e on warning-subtle #fef9c3 — ~5.0:1 (was 2.7:1) */
   --color-danger-on-subtle:  oklch(45% 0.20 27);  /* ≈ #991b1b on danger-subtle #fee2e2 — ~5.5:1 (was 4.0:1) */
@@ -70,11 +75,11 @@
 
 /* ---------- DARK MODE ---------- */
 [data-theme="dark"] {
-  /* Brand */
-  --color-brand:           oklch(72% 0.16 50);
-  --color-brand-hover:     oklch(78% 0.15 50);
-  --color-brand-active:    oklch(82% 0.13 50);
-  --color-brand-subtle:    oklch(28% 0.05 50);
+  /* Brand — refined Digital Flow green (see light-mode note above; chroma lowered same way) */
+  --color-brand:           oklch(72% 0.09 162);
+  --color-brand-hover:     oklch(78% 0.08 162);
+  --color-brand-active:    oklch(83% 0.07 162);
+  --color-brand-subtle:    oklch(27% 0.05 162);
 
   /* Surfaces */
   --color-surface:         oklch(20% 0.003 270);
@@ -108,7 +113,7 @@
   /* Pill foregrounds — bright variants for dark mode (subtle bgs are dark ~28-30% L).
      All clear WCAG 1.4.3 AA on their paired -subtle dark background. */
   --color-formula-on-subtle: oklch(82% 0.14 230); /* bright info-blue on dark info-subtle — ~8:1 */
-  --color-cask-on-subtle:    oklch(82% 0.14 50);  /* bright warm-amber on dark brand-subtle — ~8:1, brand-identity preserved */
+  --color-cask-on-subtle:    oklch(84% 0.12 162); /* retuned to the DF green brand hue (was warm amber 50); same contrast intent on dark brand-subtle */
   --color-success-on-subtle: oklch(82% 0.16 150); /* bright green on dark success-subtle — ~9:1 */
   --color-warning-on-subtle: oklch(85% 0.14 75);  /* bright amber on dark warning-subtle — ~9:1 */
   --color-danger-on-subtle:  oklch(80% 0.16 27);  /* bright red on dark danger-subtle — ~7:1 */

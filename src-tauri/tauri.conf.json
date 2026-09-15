@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Agency Agents",
+  "productName": "Digital Flow AG Agency",
   "version": "0.3.0",
   "identifier": "com.zerologic.agency-agents-app",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "Agency Agents",
+        "title": "DF AG Agency",
         "width": 1100,
         "height": 720,
         "minWidth": 800,

@@ -373,7 +373,7 @@ const ptBR = {
   "category.finance": "Finanças",
   "category.game-development": "Desenvolvimento de jogos",
   "category.gis": "GIS",
-  "category.marketing": "Marketing",
+  "category.marketing": "Marketing DF",
   "category.paid-media": "Mídia paga",
   "category.product": "Produto",
   "category.project-management": "Gerenciamento de projetos",

@@ -373,7 +373,7 @@ const zhCN = {
   "category.finance": "金融",
   "category.game-development": "游戏开发",
   "category.gis": "GIS",
-  "category.marketing": "营销",
+  "category.marketing": "营销 DF",
   "category.paid-media": "付费媒体",
   "category.product": "产品",
   "category.project-management": "项目管理",

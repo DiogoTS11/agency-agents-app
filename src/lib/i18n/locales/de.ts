@@ -373,7 +373,7 @@ const de = {
   "category.finance": "Finanzen",
   "category.game-development": "Spieleentwicklung",
   "category.gis": "GIS",
-  "category.marketing": "Marketing",
+  "category.marketing": "Marketing DF",
   "category.paid-media": "Paid Media",
   "category.product": "Produkt",
   "category.project-management": "Projektmanagement",

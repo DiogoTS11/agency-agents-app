@@ -373,7 +373,7 @@ const zhTW = {
   "category.finance": "財務",
   "category.game-development": "遊戲開發",
   "category.gis": "GIS",
-  "category.marketing": "行銷",
+  "category.marketing": "行銷 DF",
   "category.paid-media": "付費媒體",
   "category.product": "產品",
   "category.project-management": "專案管理",

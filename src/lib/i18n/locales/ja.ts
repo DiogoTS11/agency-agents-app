@@ -373,7 +373,7 @@ const ja = {
   "category.finance": "ファイナンス",
   "category.game-development": "ゲーム開発",
   "category.gis": "GIS",
-  "category.marketing": "マーケティング",
+  "category.marketing": "マーケティング DF",
   "category.paid-media": "広告運用",
   "category.product": "プロダクト",
   "category.project-management": "プロジェクト管理",

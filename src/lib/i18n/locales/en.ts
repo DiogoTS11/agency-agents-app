@@ -411,7 +411,7 @@ const en = {
   "category.finance": "Finance",
   "category.game-development": "Game Development",
   "category.gis": "GIS",
-  "category.marketing": "Marketing",
+  "category.marketing": "Marketing DF",
   "category.paid-media": "Paid Media",
   "category.product": "Product",
   "category.project-management": "Project Management",

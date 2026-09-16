@@ -373,7 +373,7 @@ const ko = {
   "category.finance": "금융",
   "category.game-development": "게임 개발",
   "category.gis": "GIS",
-  "category.marketing": "마케팅",
+  "category.marketing": "마케팅 DF",
   "category.paid-media": "유료 미디어",
   "category.product": "프로덕트",
   "category.project-management": "프로젝트 관리",

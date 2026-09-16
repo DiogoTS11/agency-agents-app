@@ -398,7 +398,7 @@ const ru = {
   "category.finance": "Финансы",
   "category.game-development": "Разработка игр",
   "category.gis": "ГИС",
-  "category.marketing": "Маркетинг",
+  "category.marketing": "Маркетинг DF",
   "category.paid-media": "Платное продвижение",
   "category.product": "Продукт",
   "category.project-management": "Управление проектами",

@@ -413,7 +413,7 @@ const fa = {
   "category.finance": "مالی",
   "category.game-development": "توسعه بازی",
   "category.gis": "GIS",
-  "category.marketing": "بازاریابی",
+  "category.marketing": "بازاریابی DF",
   "category.paid-media": "رسانه پولی",
   "category.product": "محصول",
   "category.project-management": "مدیریت پروژه",

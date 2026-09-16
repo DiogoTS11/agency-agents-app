@@ -1255,6 +1255,7 @@ mod tests {
             color: Some("blue".into()),
             vibe: None,
             body: "You are a frontend dev.\n".into(),
+            operational: None,
         }
     }
 

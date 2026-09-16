@@ -445,7 +445,10 @@
               <button class="row-main" onclick={() => openAgent(a)} aria-current={isSel ? "true" : undefined}>
                 <span class="row-emoji" aria-hidden="true">{a.emoji ?? "🧩"}</span>
                 <span class="row-text">
-                  <span class="row-name truncate">{a.name}</span>
+                  <span class="row-name truncate">
+                    {a.name}
+                    {#if a.operational?.phase}<span class="row-phase">{a.operational.phase}</span>{/if}
+                  </span>
                   {#if a.vibe}<span class="row-vibe truncate">{a.vibe}</span>{/if}
                 </span>
                 {#if rows.length > 0}
@@ -687,6 +690,23 @@
   .row-emoji { font-size: 19px; line-height: 1; flex: none; }
   .row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .row-name { font-size: var(--text-body-sm); font-weight: var(--fw-medium); color: var(--color-text-primary); }
+  /* Optional phase badge (Review Packet §49/§53) — only present for agents
+     with a frontmatter `operational.phase`; absent for every other agent. */
+  .row-phase {
+    display: inline-flex;
+    align-items: center;
+    height: 15px;
+    padding: 0 5px;
+    margin-left: 6px;
+    border-radius: var(--radius-sm);
+    background: var(--color-brand-subtle);
+    color: var(--color-cask-on-subtle, var(--color-brand));
+    font-size: 9px;
+    font-weight: var(--fw-semibold);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
   .row-vibe { font-size: var(--text-caption); color: var(--color-text-muted); }
   .row-dots { display: inline-flex; align-items: center; gap: 3px; flex: none; }
   .row-dots .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--color-text-muted); }

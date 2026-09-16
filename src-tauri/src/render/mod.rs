@@ -368,6 +368,7 @@ mod tests {
             color: Some("blue".into()),
             vibe: Some("Ships pixels.".into()),
             body: "You are a frontend dev.\n".into(),
+            operational: None,
         }
     }
 
@@ -597,6 +598,7 @@ mod tests {
                 color: None,
                 vibe: None,
                 body: String::new(),
+                operational: None,
             };
             let converted_slug = output_slug(&agent, &raw, "codex");
             assert!(

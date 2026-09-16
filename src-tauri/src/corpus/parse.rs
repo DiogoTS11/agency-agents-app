@@ -31,11 +31,16 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::types::{Agent, CorpusEntry};
+use crate::types::{Agent, CorpusEntry, Operational};
 
 /// The subset of frontmatter keys we surface. Unknown keys are ignored
 /// (tolerant parse). `name` is the only required field — a file without
 /// it is not an agent (READMEs, workflow docs) and is skipped upstream.
+///
+/// `operational` is an optional nested block (Digital Flow addition,
+/// Review Packet §49/§53) — absent for every agent that predates it or
+/// never needs it; deserializes straight into the shared [`Operational`]
+/// DTO so the same shape is used for YAML input and the Tauri IPC output.
 #[derive(Debug, Deserialize)]
 struct Frontmatter {
     name: Option<String>,
@@ -43,6 +48,8 @@ struct Frontmatter {
     emoji: Option<String>,
     color: Option<String>,
     vibe: Option<String>,
+    #[serde(default)]
+    operational: Option<Operational>,
 }
 
 /// Result of splitting a raw `.md` into its three canonical regions.
@@ -158,6 +165,7 @@ pub fn parse_agent(
         color: fm.color.clone(),
         vibe: fm.vibe.clone(),
         body,
+        operational: fm.operational,
     };
 
     let entry = CorpusEntry {

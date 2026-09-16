@@ -154,6 +154,64 @@ pub struct Agent {
     pub vibe: Option<String>,
     /// Markdown body (persona) — lazy/optional in list views.
     pub body: String,
+    /// Optional structured "operational card" summary from a frontmatter
+    /// `operational:` block (Digital Flow addition, Review Packet §49/§53).
+    /// `None` for any agent without that block — additive, backward
+    /// compatible, never required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operational: Option<Operational>,
+}
+
+/// Skill groupings inside an [`Operational`] card, reusing the DF
+/// PRIMARY/COMPLEMENTARY/SPECIALIST role vocabulary (Review Packet §30) —
+/// not a new classification.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationalSkills {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub primary: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complementary: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub specialist: Vec<String>,
+}
+
+/// A compact "operational card" summary for an agent, sourced entirely from
+/// an optional frontmatter `operational:` block. Every field is optional so
+/// a partially-filled card still renders what it has; agents with no block
+/// at all get `Agent.operational == None` and render exactly as before this
+/// feature existed (Review Packet §49 schema, §53 implementation).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Operational {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub what_it_does: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when_to_use: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when_not_to_use: Option<String>,
+    #[serde(default, skip_serializing_if = "OperationalSkills::is_empty_group")]
+    pub skills: OperationalSkills,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflows: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_status: Option<String>,
+}
+
+impl OperationalSkills {
+    fn is_empty_group(&self) -> bool {
+        self.primary.is_empty() && self.complementary.is_empty() && self.specialist.is_empty()
+    }
 }
 
 // ---------- Corpus index ----------

@@ -21,6 +21,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { i18n } from "$lib/stores/i18n.svelte";
 import type { Agent, Category } from "$lib/types";
 import { errorText } from "$lib/types";
+import { compareAgentOrder } from "$lib/util/agentOrder";
 
 class CorpusStore {
   /** List-view agents (body omitted by the backend to keep the payload small). */
@@ -150,8 +151,11 @@ class CorpusStore {
 
   /**
    * Filter the agent list by an optional category slug and a free-text query
-   * (matched case-insensitively against name + description + vibe). Returns a
-   * deterministic alphabetical-by-name slice so the dense grid is stable.
+   * (matched case-insensitively against name + description + vibe). Ordered
+   * by the Agent Ordering Standard (Review Packet §84.8/§102): agents with an
+   * explicit `operational.order` sort ascending by it (ties broken
+   * alphabetically — a real parallel phase, not an error); agents without one
+   * fall back to the legacy alphabetical-by-name behavior, unchanged.
    */
   filtered(categorySlug: string | null, query: string): Agent[] {
     const q = query.trim().toLowerCase();
@@ -161,7 +165,7 @@ class CorpusStore {
       const hay = `${a.name} ${a.description} ${a.vibe ?? ""}`.toLowerCase();
       return hay.includes(q);
     });
-    out.sort((a, b) => a.name.localeCompare(b.name));
+    out.sort(compareAgentOrder);
     return out;
   }
 }

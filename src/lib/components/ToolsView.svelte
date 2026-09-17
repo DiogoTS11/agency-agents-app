@@ -25,6 +25,7 @@
   import ResizeHandle from "./ResizeHandle.svelte";
   import { install } from "$lib/stores/install.svelte";
   import { corpus } from "$lib/stores/corpus.svelte";
+  import { buildOrderBySlug, compareBySlugOrder } from "$lib/util/agentOrder";
   import { toast } from "$lib/stores/toast.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { toolAccent, toolMark, toolIcon } from "$lib/util/toolBadge";
@@ -183,7 +184,10 @@
   const sel = $derived<ToolRow | null>(visibleTools.find((t) => t.tool === selectedTool) ?? null);
   const selRows = $derived(
     selectedTool
-      ? install.installed.filter((i) => i.tool === selectedTool).slice().sort((a, b) => a.name.localeCompare(b.name))
+      ? install.installed
+          .filter((i) => i.tool === selectedTool)
+          .slice()
+          .sort(compareBySlugOrder(buildOrderBySlug(corpus.agents)))
       : [],
   );
   const selHealth = $derived(selectedTool ? health(selectedTool) : null);

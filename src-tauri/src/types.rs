@@ -206,6 +206,14 @@ pub struct Operational {
     pub outputs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deployment_status: Option<String>,
+    /// Optional explicit sort key (Agent Ordering Standard, Review Packet
+    /// §84.8/§102). Absent for any agent with no defined production
+    /// sequence (parallel-utility divisions, singleton divisions) — those
+    /// fall back to the legacy alphabetical order unchanged. Multiple
+    /// agents may legitimately share the same `order` (a real parallel
+    /// phase), broken by name at the sort site, not here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i64>,
 }
 
 impl OperationalSkills {

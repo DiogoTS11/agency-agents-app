@@ -14,6 +14,7 @@
   import { corpus } from "$lib/stores/corpus.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { i18n } from "$lib/stores/i18n.svelte";
+  import { buildOrderBySlug, compareBySlugOrder } from "$lib/util/agentOrder";
   import type { Tool } from "$lib/types";
 
   interface Props {
@@ -30,7 +31,7 @@
     for (const r of outdated) if (!seen.has(r.slug)) seen.set(r.slug, r.name);
     return [...seen.entries()]
       .map(([slug, name]) => ({ slug, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort(compareBySlugOrder(buildOrderBySlug(corpus.agents)));
   });
   // Columns: only the tools that actually have an outdated install, in menu order.
   const cols = $derived.by(() => {

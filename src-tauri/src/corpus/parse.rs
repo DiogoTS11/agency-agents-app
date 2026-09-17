@@ -274,4 +274,45 @@ mod tests {
         assert!(agent.vibe.is_none());
         assert_eq!(entry.description, "");
     }
+
+    // ---- Agent Ordering Standard schema (Review Packet §84.8/§102) ----
+
+    #[test]
+    fn operational_order_parses_when_present() {
+        let md = "---\nname: Ordered\noperational:\n  role: Does things\n  order: 2\n---\nbody\n";
+        let (agent, _) = parse_agent("ordered", "c", md).unwrap().unwrap();
+        let op = agent.operational.expect("operational block");
+        assert_eq!(op.order, Some(2));
+    }
+
+    #[test]
+    fn operational_order_absent_is_none_not_a_parse_error() {
+        // An agent with a full operational block but no `order` key — the
+        // new field must be optional and not break existing cards.
+        let md = "---\nname: Unordered\noperational:\n  role: Does things\n---\nbody\n";
+        let (agent, _) = parse_agent("unordered", "c", md).unwrap().unwrap();
+        let op = agent.operational.expect("operational block");
+        assert_eq!(op.order, None);
+        assert_eq!(op.role.as_deref(), Some("Does things"));
+    }
+
+    #[test]
+    fn agent_with_no_operational_block_still_parses() {
+        // Upstream agents that predate the operational card entirely must
+        // keep parsing with `operational: None` — no global migration
+        // required for this schema addition.
+        let md = "---\nname: Legacy\n---\nbody\n";
+        let (agent, _) = parse_agent("legacy", "c", md).unwrap().unwrap();
+        assert!(agent.operational.is_none());
+    }
+
+    #[test]
+    fn shared_order_values_round_trip() {
+        // A duplicate order value across sibling agents is a valid,
+        // intentional "parallel phase" shape, not an error — the schema
+        // must not reject it; the sort site breaks the tie by name.
+        let md = "---\nname: Shared\noperational:\n  order: 2\n---\nbody\n";
+        let (agent, _) = parse_agent("shared", "c", md).unwrap().unwrap();
+        assert_eq!(agent.operational.unwrap().order, Some(2));
+    }
 }

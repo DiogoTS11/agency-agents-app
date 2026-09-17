@@ -32,6 +32,7 @@
 
   import { install } from "$lib/stores/install.svelte";
   import { corpus } from "$lib/stores/corpus.svelte";
+  import { buildOrderBySlug, compareBySlugOrder } from "$lib/util/agentOrder";
   import { projects } from "$lib/stores/projects.svelte";
   import { ui } from "$lib/stores/ui.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -72,6 +73,7 @@
   const detailGroups = $derived.by(() => {
     if (!selected) return [];
     const divOf = new Map(corpus.agents.map((a) => [a.slug, a.category]));
+    const byOrder = compareBySlugOrder(buildOrderBySlug(corpus.agents));
     const m = new Map<string, InstalledAgent[]>();
     for (const r of rosterFor(selected.path)) {
       const div = divOf.get(r.slug) ?? OTHER;
@@ -84,7 +86,7 @@
       label: slug === OTHER ? i18n.t("common.other") : corpus.labelOf(slug),
       color: slug === OTHER ? "#94A3B8" : corpus.colorOf(slug),
       icon: slug === OTHER ? "HelpCircle" : corpus.iconOf(slug),
-      rows: rows.slice().sort((a, b) => a.name.localeCompare(b.name)),
+      rows: rows.slice().sort(byOrder),
     }));
     out.sort((a, b) => (a.slug === OTHER ? 1 : b.slug === OTHER ? -1 : a.label.localeCompare(b.label)));
     return out;

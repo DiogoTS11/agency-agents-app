@@ -379,6 +379,11 @@ export interface Operational {
   inputs?: string[];
   outputs?: string[];
   deploymentStatus?: string | null;
+  /** Optional explicit sort key (Agent Ordering Standard, Review Packet
+      §84.8/§102). `null`/absent means this agent has no defined production
+      sequence and falls back to legacy alphabetical order. Agents may
+      legitimately share the same value (a real parallel phase). */
+  order?: number | null;
 }
 
 /**

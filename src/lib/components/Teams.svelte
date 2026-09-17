@@ -33,6 +33,7 @@
   import StarterPrompt from "./StarterPrompt.svelte";
   import { install } from "$lib/stores/install.svelte";
   import { corpus } from "$lib/stores/corpus.svelte";
+  import { buildOrderBySlug, compareAgentOrder, compareBySlugOrder } from "$lib/util/agentOrder";
   import { teams, type SavedTeam } from "$lib/stores/teams.svelte";
   import { toast } from "$lib/stores/toast.svelte";
   import { ui } from "$lib/stores/ui.svelte";
@@ -62,6 +63,8 @@
   const OTHER = "__other";
   const groups = $derived.by(() => {
     const divOf = new Map(corpus.agents.map((a) => [a.slug, a.category]));
+    const orderBySlug = buildOrderBySlug(corpus.agents);
+    const byOrder = compareBySlugOrder(orderBySlug);
     const m = new Map<string, InstalledAgent[]>();
     for (const r of managed) {
       const div = divOf.get(r.slug) ?? OTHER;
@@ -74,7 +77,7 @@
       label: slug === OTHER ? i18n.t("common.other") : corpus.labelOf(slug),
       color: slug === OTHER ? "#94A3B8" : corpus.colorOf(slug),
       icon: slug === OTHER ? "HelpCircle" : corpus.iconOf(slug),
-      rows: rows.slice().sort((a, b) => a.name.localeCompare(b.name)),
+      rows: rows.slice().sort(byOrder),
     }));
     out.sort((a, b) => (a.slug === OTHER ? 1 : b.slug === OTHER ? -1 : a.label.localeCompare(b.label)));
     return out;
@@ -167,7 +170,7 @@
       label: slug === TOTHER ? i18n.t("common.other") : corpus.labelOf(slug),
       color: slug === TOTHER ? "#94A3B8" : corpus.colorOf(slug),
       icon: slug === TOTHER ? "HelpCircle" : corpus.iconOf(slug),
-      rows: rows.slice().sort((a, b) => a.name.localeCompare(b.name)),
+      rows: rows.slice().sort(compareAgentOrder),
     }));
     out.sort((a, b) => (a.slug === TOTHER ? 1 : b.slug === TOTHER ? -1 : a.label.localeCompare(b.label)));
     return out;

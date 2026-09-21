@@ -6,6 +6,7 @@
 
 mod commands;
 pub(crate) mod agent_runtime;
+pub(crate) mod local_adapter;
 mod corpus;
 mod error;
 mod github;

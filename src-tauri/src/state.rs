@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::commands::settings::{self, SettingsLoadState};
 use crate::commands::updater::UpdaterState;
 use crate::error::AppError;
+use crate::local_adapter::LocalAdapterManager;
 
 /// Shared application state. Registered via `Builder::manage()`.
 pub struct AppState {
@@ -49,6 +50,10 @@ pub struct AppState {
     /// staleness. See `crate::commands::updater::UpdaterState` for the
     /// shape and the rationale.
     pub updater_state: Arc<RwLock<UpdaterState>>,
+
+    /// App-owned localhost adapter lifecycle. The listener is started only
+    /// with an explicit machine-local descriptor; no port is invented here.
+    pub local_adapter: LocalAdapterManager,
 }
 
 impl AppState {
@@ -84,6 +89,7 @@ impl AppState {
             corpus_refresh_in_flight: Arc::new(Mutex::new(())),
             settings: Arc::new(RwLock::new(settings_state)),
             updater_state: crate::commands::updater::empty_state(),
+            local_adapter: LocalAdapterManager::new(),
         })
     }
 

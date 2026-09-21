@@ -37,6 +37,37 @@ pub enum AppError {
     #[error("internal error: {message}")]
     Internal { message: String },
 
+    #[error("corpus refresh is already running")]
+    CorpusRefreshBusy,
+
+    #[error("corpus snapshot is inconsistent after retries")]
+    CorpusSnapshotInconsistent,
+
+    #[error("corpus snapshot is stale")]
+    CorpusIndexStale,
+
+    #[error("corpus roster is incomplete: {missing}")]
+    CorpusRosterMismatch { missing: String },
+
+    #[error("corpus state is missing")]
+    CorpusStateMissing,
+    #[error("corpus index is missing")]
+    CorpusIndexMissing,
+    #[error("corpus meta is missing")]
+    CorpusMetaMissing,
+    #[error("corpus manifest is missing")]
+    CorpusManifestMissing,
+    #[error("corpus index is malformed")]
+    CorpusIndexMalformed,
+    #[error("corpus meta is malformed")]
+    CorpusMetaMalformed,
+    #[error("corpus manifest is malformed")]
+    CorpusManifestMalformed,
+    #[error("corpus schema is unsupported")]
+    CorpusSchemaUnsupported,
+    #[error("corpus count does not match snapshot")]
+    CorpusCountMismatch,
+
     /// Paranoid/Offline mode is on (or settings are corrupt → fail closed).
     /// The `feature` field identifies which outbound command was
     /// rejected, so the UI can route the toast to the right setting.

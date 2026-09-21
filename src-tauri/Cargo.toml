@@ -59,6 +59,7 @@ base64 = "0.22"
 # than incidental.
 sha2 = "0.10"
 hex = "0.4"
+fs2 = "0.4"
 
 # Gzip codec for the bundled catalog (Phase 12a). Used both for
 # decompressing the bundled `formula.json.gz` / `cask.json.gz` and for

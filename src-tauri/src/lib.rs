@@ -5,6 +5,7 @@
 //! in `commands::*`.
 
 mod commands;
+pub(crate) mod agent_runtime;
 mod corpus;
 mod error;
 mod github;

@@ -180,6 +180,8 @@ pub(crate) struct CorpusSnapshot {
     pub index: BTreeMap<String, CorpusEntry>,
     pub meta: CorpusMeta,
     pub provenance: &'static str,
+    pub generation_id: String,
+    pub generated_at: String,
 }
 
 struct RefreshLock {
@@ -617,7 +619,13 @@ async fn read_validated_snapshot_inner(
             continue;
         }
         let provenance = if stored.version == BASELINE_VERSION { "BASELINE" } else { "LIVE" };
-        return Ok(CorpusSnapshot { index, meta: stored.into(), provenance });
+        return Ok(CorpusSnapshot {
+            index,
+            meta: stored.into(),
+            provenance,
+            generation_id: manifest.generation_id,
+            generated_at: manifest.generated_at,
+        });
     }
     Err(AppError::CorpusSnapshotInconsistent)
 }

@@ -151,6 +151,13 @@ struct StoredMeta {
     count: u32,
 }
 
+#[derive(Debug, Clone)]
+struct VerifiedSourceRefresh {
+    version: String,
+    commit: Option<String>,
+    fetched_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SnapshotManifest {
@@ -691,6 +698,14 @@ pub(crate) fn catalog_root(app_data_dir: &Path, source: &CatalogSource) -> PathB
 /// with `count == 0` so the UI degrades to "no agents" rather than
 /// failing to launch.
 pub async fn resolve_active(app_data_dir: &Path, baseline_dir: &Path) -> Corpus {
+    resolve_active_with_refresh(app_data_dir, baseline_dir, None).await
+}
+
+async fn resolve_active_with_refresh(
+    app_data_dir: &Path,
+    baseline_dir: &Path,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Corpus {
     let source = load_catalog_source(app_data_dir).await;
     let dir = catalog_root(app_data_dir, &source);
 
@@ -733,7 +748,12 @@ pub async fn resolve_active(app_data_dir: &Path, baseline_dir: &Path) -> Corpus 
     // Persist index + meta (best effort — read commands work from the
     // in-memory copy regardless; the on-disk index exists for the
     // reconciliation subsystem built in a later phase).
-    if let Err(e) = persist(app_data_dir, &corpus).await {
+    if let Some(refresh) = verified_refresh {
+        corpus.meta.version = refresh.version.clone();
+        corpus.meta.commit = refresh.commit.clone();
+        corpus.meta.fetched_at = refresh.fetched_at.clone();
+    }
+    if let Err(e) = persist(app_data_dir, &corpus, verified_refresh).await {
         tracing::warn!("corpus: persist index/meta failed: {e}");
     }
 
@@ -934,7 +954,11 @@ async fn seed_from_baseline(baseline: &Path, dest: &Path, categories: &[String])
 /// when none exists (fresh baseline seed) it is stamped once with the
 /// current UTC time so subsequent launches don't re-stamp it (keeps the
 /// index byte-stable across launches).
-async fn persist(app_data_dir: &Path, corpus: &Corpus) -> Result<(), AppError> {
+async fn persist(
+    app_data_dir: &Path,
+    corpus: &Corpus,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Result<(), AppError> {
     let _lock = RefreshLock::acquire(app_data_dir)?;
 
     // Index — deterministic, no timestamp.
@@ -942,15 +966,22 @@ async fn persist(app_data_dir: &Path, corpus: &Corpus) -> Result<(), AppError> {
 
     // Meta — preserve prior fetched_at/commit if present; else stamp now.
     let prior = load_stored_meta(app_data_dir).await;
-    let fetched_at = prior
-        .as_ref()
-        .map(|m| m.fetched_at.clone())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    let commit = prior.as_ref().and_then(|m| m.commit.clone());
+    let (version, commit, fetched_at) = if let Some(refresh) = verified_refresh {
+        (refresh.version.clone(), refresh.commit.clone(), refresh.fetched_at.clone())
+    } else {
+        (
+            corpus.meta.version.clone(),
+            prior.as_ref().and_then(|m| m.commit.clone()),
+            prior
+                .as_ref()
+                .map(|m| m.fetched_at.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        )
+    };
 
     let stored = StoredMeta {
-        version: corpus.meta.version.clone(),
+        version,
         commit,
         fetched_at,
         count: corpus.count(),
@@ -1367,7 +1398,7 @@ async fn provision_managed() -> Result<PathBuf, AppError> {
 /// Pull the active catalog root up to date. Git checkout → `git pull --ff-only`;
 /// otherwise a tarball refresh into the root. Read-only sources are rejected by
 /// the caller; Bundled refreshes its app-data copy.
-async fn pull_active(app_data_dir: &Path) -> Result<(), AppError> {
+async fn pull_active(app_data_dir: &Path) -> Result<VerifiedSourceRefresh, AppError> {
     let source = load_catalog_source(app_data_dir).await;
     if matches!(&source, CatalogSource::UserClone { manage: false, .. }) {
         return Err(AppError::InvalidArgument {
@@ -1376,11 +1407,25 @@ async fn pull_active(app_data_dir: &Path) -> Result<(), AppError> {
     }
     let root = catalog_root(app_data_dir, &source);
     if has_git_dir(&root) && git_available().await {
-        run_git(&["-C", &root.to_string_lossy(), "pull", "--ff-only"], None).await?;
-        Ok(())
+        let root_arg = root.to_string_lossy().to_string();
+        run_git(&["-C", &root_arg, "pull", "--ff-only"], None).await?;
+        let commit = run_git(&["-C", &root_arg, "rev-parse", "HEAD"], None)
+            .await?
+            .trim()
+            .to_string();
+        Ok(VerifiedSourceRefresh {
+            version: format!("git:{commit}"),
+            commit: Some(commit),
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+        })
     } else {
         // Tarball refresh writes into the active root (refresh() resolves it).
-        refresh(app_data_dir).await.map(|_| ())
+        let meta = refresh(app_data_dir).await?;
+        Ok(VerifiedSourceRefresh {
+            version: meta.version,
+            commit: meta.commit,
+            fetched_at: meta.fetched_at,
+        })
     }
 }
 
@@ -1549,16 +1594,20 @@ pub async fn catalog_source_set(
 
     let adir = app_data_dir(&app)?;
     save_catalog_source(&adir, &source).await?;
-    rebuild_corpus(&app, &state).await
+    rebuild_corpus(&app, &state, None).await
 }
 
 /// Rebuild the in-memory corpus from the currently-persisted source and swap
 /// the memoized `Arc`, so every view reflects the latest catalog state. Shared
 /// by source switching, provisioning, and pull.
-async fn rebuild_corpus(app: &AppHandle, state: &AppState) -> Result<CorpusMeta, AppError> {
+async fn rebuild_corpus(
+    app: &AppHandle,
+    state: &AppState,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Result<CorpusMeta, AppError> {
     let adir = app_data_dir(app)?;
     let bdir = baseline_dir(app)?;
-    let fresh = Arc::new(resolve_active(&adir, &bdir).await);
+    let fresh = Arc::new(resolve_active_with_refresh(&adir, &bdir, verified_refresh).await);
     let meta = fresh.meta();
     {
         let mut cached = state.corpus_cache.lock().await;
@@ -1585,7 +1634,7 @@ pub async fn catalog_provision_managed(
     let path = provision_managed().await?;
     let adir = app_data_dir(&app)?;
     save_catalog_source(&adir, &CatalogSource::Managed { path: path.to_string_lossy().to_string() }).await?;
-    rebuild_corpus(&app, &state).await
+    rebuild_corpus(&app, &state, None).await
 }
 
 /// `catalog_pull()` — update the active catalog root (git pull or tarball
@@ -1597,8 +1646,8 @@ pub async fn catalog_pull(
 ) -> Result<CorpusMeta, AppError> {
     state.require_network("catalog_pull").await?;
     let adir = app_data_dir(&app)?;
-    pull_active(&adir).await?;
-    rebuild_corpus(&app, &state).await
+    let verified_refresh = pull_active(&adir).await?;
+    rebuild_corpus(&app, &state, Some(&verified_refresh)).await
 }
 
 /// `catalog_status()` — provenance + freshness of the active catalog (source,
@@ -1977,6 +2026,82 @@ mod tests {
         assert!(corpus_dir(app_data.path()).join("engineering/alpha.md").exists());
         assert!(index_path(app_data.path()).exists());
         assert!(meta_path(app_data.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn verified_source_refresh_rewrites_fresh_live_metadata() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        let refreshed_at = Utc::now() - Duration::seconds(10);
+        let verified = VerifiedSourceRefresh {
+            version: "git:a21eb9d".into(),
+            commit: Some("a21eb9d".into()),
+            fetched_at: refreshed_at.to_rfc3339(),
+        };
+
+        let corpus = resolve_active_with_refresh(app_data.path(), baseline.path(), Some(&verified)).await;
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+        let snapshot = read_validated_snapshot(app_data.path(), 86_400, refreshed_at + Duration::seconds(1)).await.unwrap();
+
+        assert_eq!(corpus.meta.version, "git:a21eb9d");
+        assert_eq!(stored.version, "git:a21eb9d");
+        assert_eq!(stored.commit.as_deref(), Some("a21eb9d"));
+        assert_eq!(stored.fetched_at, refreshed_at.to_rfc3339());
+        assert_eq!(snapshot.provenance, "LIVE");
+        assert!(DateTime::parse_from_rfc3339(&snapshot.generated_at).is_ok());
+        assert_ne!(snapshot.generated_at, stored.fetched_at, "generation time is independent from source freshness");
+    }
+
+    #[tokio::test]
+    async fn rebuild_without_verified_refresh_preserves_source_freshness() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        let stale_at = (Utc::now() - Duration::hours(48)).to_rfc3339();
+        let stale = StoredMeta {
+            version: "git:old".into(),
+            commit: Some("old".into()),
+            fetched_at: stale_at.clone(),
+            count: 1,
+        };
+        std::fs::create_dir_all(state_dir(app_data.path())).unwrap();
+        std::fs::write(meta_path(app_data.path()), serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
+
+        let corpus = resolve_active(app_data.path(), baseline.path()).await;
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+
+        assert_eq!(corpus.meta.version, "git:old");
+        assert_eq!(stored.fetched_at, stale_at);
+        assert_eq!(stored.commit.as_deref(), Some("old"));
+    }
+
+    #[tokio::test]
+    async fn managed_clone_refresh_metadata_is_live_and_source_specific() {
+        let catalog = tempfile::tempdir().unwrap();
+        write_agent(catalog.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        save_catalog_source(
+            app_data.path(),
+            &CatalogSource::UserClone { path: catalog.path().to_string_lossy().into(), manage: true },
+        )
+        .await
+        .unwrap();
+        let verified = VerifiedSourceRefresh {
+            version: "git:a21eb9d".into(),
+            commit: Some("a21eb9d".into()),
+            fetched_at: Utc::now().to_rfc3339(),
+        };
+
+        let snapshot = resolve_active_with_refresh(app_data.path(), Path::new("missing-baseline"), Some(&verified)).await;
+        let validated = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await.unwrap();
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+
+        assert_eq!(snapshot.meta.count, 1);
+        assert_eq!(validated.provenance, "LIVE");
+        assert_eq!(stored.version, "git:a21eb9d");
+        assert_eq!(stored.commit.as_deref(), Some("a21eb9d"));
+        assert_ne!(stored.version, BASELINE_VERSION);
     }
 
     #[tokio::test]

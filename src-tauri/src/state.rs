@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::commands::settings::{self, SettingsLoadState};
 use crate::commands::updater::UpdaterState;
 use crate::error::AppError;
-use crate::local_adapter::LocalAdapterManager;
+use crate::local_adapter::{load_machine_runtime_config, LocalAdapterManager, SystemCredentialStore};
 
 /// Shared application state. Registered via `Builder::manage()`.
 pub struct AppState {
@@ -139,6 +139,22 @@ pub fn initialize<R: tauri::Runtime>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
     let state = AppState::build()?;
+    let adapter_config = load_machine_runtime_config()?;
+    let adapter = state.local_adapter.clone();
+    let app_data_dir = state.app_data_dir.clone();
+    let credentials = Arc::new(SystemCredentialStore);
+    let descriptor = tauri::async_runtime::block_on(adapter.start(
+        adapter_config,
+        app_data_dir,
+        credentials,
+    ))?;
+    tracing::info!(
+        host = %descriptor.host,
+        port = descriptor.port,
+        contract_version = %descriptor.contract_version,
+        auth_ref = %descriptor.auth_ref,
+        "agent agency localhost adapter started"
+    );
     app.manage(state);
     Ok(())
 }

@@ -6,7 +6,7 @@
 //! does not resolve project names, read DigitalFlow registries, or implement
 //! Discovery/Bootstrap semantics a second time.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::{Path, PathBuf}, sync::Arc};
 
 use axum::{
     body::Bytes,
@@ -57,6 +57,48 @@ pub struct LocalAdapterConfig {
     pub corpus_max_age_seconds: i64,
 }
 
+#[derive(Debug, Deserialize)]
+struct MachineRuntimeDescriptor {
+    host: String,
+    port: u16,
+    contract_version: String,
+    auth_ref: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MachineRuntimeConfig {
+    schema_version: String,
+    corpus_max_age_seconds: i64,
+    agent_agency_runtime: Option<MachineRuntimeDescriptor>,
+}
+
+/// Read the already-ratified machine-local descriptor. The App reads only this
+/// machine config; it never reads Command Center registries or project paths.
+pub fn load_machine_runtime_config() -> Result<LocalAdapterConfig, AdapterError> {
+    let home = dirs::home_dir().ok_or(AdapterError::DescriptorUnavailable)?;
+    load_machine_runtime_config_from(&home.join(".digital-flow-os").join("os-paths.json"))
+}
+
+fn load_machine_runtime_config_from(path: &Path) -> Result<LocalAdapterConfig, AdapterError> {
+    let raw = std::fs::read_to_string(path).map_err(|_| AdapterError::DescriptorUnavailable)?;
+    let config: MachineRuntimeConfig = serde_json::from_str(&raw)
+        .map_err(|_| AdapterError::DescriptorInvalid)?;
+    if config.schema_version != "1.1.0" {
+        return Err(AdapterError::DescriptorInvalid);
+    }
+    let descriptor = config.agent_agency_runtime.ok_or(AdapterError::DescriptorMissing)?;
+    if descriptor.host != LOOPBACK_HOST
+        || descriptor.contract_version != CONTRACT_VERSION
+        || descriptor.auth_ref != AUTH_REF
+        || config.corpus_max_age_seconds < 1
+    {
+        return Err(AdapterError::DescriptorInvalid);
+    }
+    let mut adapter = LocalAdapterConfig::new(descriptor.port)?;
+    adapter.corpus_max_age_seconds = config.corpus_max_age_seconds;
+    Ok(adapter)
+}
+
 impl LocalAdapterConfig {
     pub fn new(port: u16) -> Result<Self, AdapterError> {
         if port == 0 {
@@ -100,6 +142,12 @@ pub fn rotate_token(store: &dyn CredentialStore) -> Result<String, AdapterError>
 
 #[derive(Debug, Error)]
 pub enum AdapterError {
+    #[error("agent agency runtime descriptor is unavailable")]
+    DescriptorUnavailable,
+    #[error("agent agency runtime descriptor is missing")]
+    DescriptorMissing,
+    #[error("agent agency runtime descriptor is invalid")]
+    DescriptorInvalid,
     #[error("runtime adapter port must be an explicitly configured non-zero value")]
     InvalidPort,
     #[error("runtime adapter is already running")]
@@ -497,6 +545,57 @@ mod tests {
         assert_eq!(LOOPBACK_HOST, "127.0.0.1");
         assert!(LocalAdapterConfig::new(4315).is_ok());
         assert!(LocalAdapterConfig::new(0).is_err());
+    }
+
+    fn write_descriptor(value: serde_json::Value) -> tempfile::TempDir {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("os-paths.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+        temp
+    }
+
+    fn valid_descriptor() -> serde_json::Value {
+        json!({
+            "schema_version": "1.1.0",
+            "corpus_max_age_seconds": 86400,
+            "agent_agency_runtime": {
+                "host": "127.0.0.1", "port": 4315,
+                "contract_version": "1.1.0", "auth_ref": "agent-agency-runtime-v1"
+            }
+        })
+    }
+
+    #[test]
+    fn machine_descriptor_loads_configured_loopback_port_without_a_default() {
+        let temp = write_descriptor(valid_descriptor());
+        let config = load_machine_runtime_config_from(&temp.path().join("os-paths.json")).unwrap();
+        assert_eq!(config.port, 4315);
+        assert_eq!(config.corpus_max_age_seconds, 86400);
+    }
+
+    #[test]
+    fn machine_descriptor_rejects_missing_invalid_or_non_loopback_values() {
+        let missing = write_descriptor(json!({"schema_version":"1.1.0", "corpus_max_age_seconds":86400}));
+        assert!(matches!(
+            load_machine_runtime_config_from(&missing.path().join("os-paths.json")),
+            Err(AdapterError::DescriptorMissing)
+        ));
+
+        let mut invalid_host = valid_descriptor();
+        invalid_host["agent_agency_runtime"]["host"] = json!("0.0.0.0");
+        let invalid_host = write_descriptor(invalid_host);
+        assert!(matches!(
+            load_machine_runtime_config_from(&invalid_host.path().join("os-paths.json")),
+            Err(AdapterError::DescriptorInvalid)
+        ));
+
+        let invalid_schema = write_descriptor(json!({
+            "schema_version":"1.0.0", "corpus_max_age_seconds":86400,
+            "agent_agency_runtime": valid_descriptor()["agent_agency_runtime"].clone()
+        }));
+        assert!(matches!(
+            load_machine_runtime_config_from(&invalid_schema.path().join("os-paths.json")),
+            Err(AdapterError::DescriptorInvalid)
+        ));
     }
 
     #[test]

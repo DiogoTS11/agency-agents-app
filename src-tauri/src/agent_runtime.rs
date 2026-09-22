@@ -389,6 +389,20 @@ fn validated_roster(snapshot: &CorpusSnapshot) -> Result<Vec<RosterAgent>, Runti
     Ok(roster)
 }
 
+fn missing_capability_action(required: bool) -> (&'static str, &'static str) {
+    if required {
+        (
+            "INSTALL_REQUIRES_APPROVAL",
+            "No existing registry entry or environment evidence — this would be a net-new capability, gated behind explicit human approval.",
+        )
+    } else {
+        (
+            "NO_ACTION",
+            "No existing evidence, and not required for this project — not recommended from zero evidence.",
+        )
+    }
+}
+
 fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster: &[RosterAgent]) -> (Vec<PreparedCapability>, Vec<PreparedCapability>, Vec<PreparedCapability>, Vec<BootstrapAction>, Vec<EnvironmentObservation>, Vec<String>) {
     let stack = &context.project_context.existing_stack;
     let services = &context.project_context.connected_services;
@@ -410,7 +424,7 @@ fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster
             required.push(item);
         }
     }
-    let mut add_capability = |id: &str, kind: &str, marker: &str, reason: &str| {
+    let mut add_capability = |id: &str, kind: &str, marker: &str, reason: &str, is_required: bool| {
         let relevant = services.iter().any(|value| value.to_lowercase().contains(marker)) || (id == "git-cli" && context.project_context.existing_capabilities.iter().any(|value| value.eq_ignore_ascii_case("git")));
         if !relevant { return; }
         let found = discovery.iter().find(|record| record.id == id);
@@ -422,10 +436,19 @@ fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster
             Some(DiscoveryState::Stale) => (CapabilityStatus::Stale, "RESOLVE_STALE_STATE", "Registry and environment facts disagree; resolve before use.", Some(format!("discovery:{id}"))),
             Some(DiscoveryState::NeedsCanonicalization) => (CapabilityStatus::Verify, "CANONICALIZE", "Canonical source is unresolved.", Some(format!("discovery:{id}"))),
             Some(DiscoveryState::Unclassified) => (CapabilityStatus::Verify, "VERIFY", "Detected but not canonically classified.", Some(format!("discovery:{id}"))),
-            Some(DiscoveryState::Missing) => (CapabilityStatus::NoEvidence, "GAP", "Registry evidence exists but the capability was not detected.", Some(format!("discovery:{id}"))),
-            Some(DiscoveryState::Registered) | Some(DiscoveryState::Detected) | None => (CapabilityStatus::NoEvidence, "GAP", "No usable evidence was established.", None),
+            Some(DiscoveryState::Missing) => {
+                let (action, action_reason) = missing_capability_action(is_required);
+                (CapabilityStatus::NoEvidence, action, action_reason, Some(format!("discovery:{id}")))
+            }
+            Some(DiscoveryState::Registered) | Some(DiscoveryState::Detected) | None => {
+                let (action, action_reason) = missing_capability_action(is_required);
+                (CapabilityStatus::NoEvidence, action, action_reason, None)
+            }
             },
-            None => (CapabilityStatus::NoEvidence, "GAP", "No usable evidence was established.", None),
+            None => {
+                let (action, action_reason) = missing_capability_action(is_required);
+                (CapabilityStatus::NoEvidence, action, action_reason, None)
+            }
         };
         let item = PreparedCapability { capability_id: id.into(), capability_type: kind.into(), reason: reason.into(), status, evidence_ref };
         actions.push(BootstrapAction { capability_id: id.into(), action: action.into(), reason: action_reason.into() });
@@ -433,10 +456,10 @@ fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster
         provenance.push(format!("{id}:environment-evidence"));
         required.push(item);
     };
-    add_capability("vercel-cli", "DEPLOYMENT_TOOL", "vercel", "Declared deployment target.");
-    add_capability("supabase-service", "SERVICE", "supabase", "Declared application data service.");
-    add_capability("resend-service", "SERVICE", "resend", "Declared transactional email service.");
-    add_capability("git-cli", "CLI", "git", "Version control for the project repository.");
+    add_capability("vercel-cli", "DEPLOYMENT_TOOL", "vercel", "Declared deployment target.", true);
+    add_capability("supabase-service", "SERVICE", "supabase", "Declared application data service.", true);
+    add_capability("resend-service", "SERVICE", "resend", "Declared transactional email service.", true);
+    add_capability("git-cli", "CLI", "git", "Version control for the project repository.", true);
     let excluded = [
         ("gstack", "WORKFLOW", "DO_NOT_INSTALL remains in force."),
         ("graphify", "CLI", "No canonical source or evidence exists."),
@@ -490,6 +513,30 @@ mod tests {
         CorpusSnapshot { index, meta: CorpusMeta { version: "baseline".into(), commit: None, fetched_at: "2026-09-21T09:00:00Z".into(), count: 26 }, provenance: "BASELINE", generation_id: "00000000-0000-0000-0000-000000000001".into(), generated_at: "2026-09-21T09:00:00Z".into() }
     }
 
+    fn required_service_context(service: &str) -> ProjectContext {
+        let mut value = context("fixture-project");
+        value.project_context.connected_services = vec![service.into()];
+        value.project_context.existing_stack = vec!["application stack".into()];
+        value.project_context.existing_capabilities = vec!["existing capability".into()];
+        value
+    }
+
+    fn evidence_with_git_present() -> EnvironmentEvidence {
+        let mut value = evidence();
+        value.observations.push(CapabilityObservations {
+            capability_id: "git-cli".into(),
+            observations: vec![EnvironmentObservation {
+                source_category: EvidenceSourceCategory::CliProbe,
+                kind: EvidenceKind::CliProbe,
+                result: EvidenceResult::Present,
+                version: Some("2.0".into()),
+                detail: None,
+                observed_at: "2026-09-21T10:00:00Z".into(),
+            }],
+        });
+        value
+    }
+
     #[test]
     fn strict_context_rejects_unknown_fields_and_reports_empty_context() {
         let raw = r#"{"project_id":"p1","project_context":{"client_or_owner":"","project_type":"","objective_or_problem":"","deliverables":[],"scope":[],"existing_stack":[],"connected_services":[],"constraints":[],"approval_owner":"","existing_capabilities":[]},"repoRoot":"x"}"#;
@@ -526,12 +573,51 @@ mod tests {
 
     #[test]
     fn atom_preparation_preserves_gap_stale_and_approval_boundary() {
-        let result = prepare_project(&context("atom-website"), &evidence(), &snapshot()).unwrap();
+        let result = prepare_project(&context("atom-website"), &evidence_with_git_present(), &snapshot()).unwrap();
         assert_eq!(result.readiness, Readiness::ReadyWithWarnings);
         assert!(result.gaps.iter().any(|item| item.capability_id == "gap-custom-frontend"));
         assert!(result.stale_states.iter().any(|item| item.id == "vercel-cli"));
         assert!(result.bootstrap_actions.iter().any(|item| item.action == "RESOLVE_STALE_STATE"));
-        assert!(result.bootstrap_actions.iter().all(|item| !item.action.starts_with("INSTALL")));
+        assert_eq!(result.approval_actions.iter().filter(|item| item.action == "INSTALL_REQUIRES_APPROVAL").count(), 2);
+        assert!(result.bootstrap_actions.iter().filter(|item| item.action == "INSTALL_REQUIRES_APPROVAL").count() == 2);
+        assert_eq!(result.next_operation, "REQUEST_APPROVAL");
+    }
+
+    #[test]
+    fn required_no_evidence_generates_visible_install_approval() {
+        let result = prepare_project(&required_service_context("Supabase"), &evidence(), &snapshot()).unwrap();
+        let capability = result.required_capabilities.iter().find(|item| item.capability_id == "supabase-service").unwrap();
+        assert_eq!(capability.status, CapabilityStatus::NoEvidence);
+        assert_eq!(result.approval_actions.iter().filter(|item| item.capability_id == "supabase-service").count(), 1);
+        assert!(result.bootstrap_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "INSTALL_REQUIRES_APPROVAL"));
+        assert_eq!(result.next_operation, "REQUEST_APPROVAL");
+    }
+
+    #[test]
+    fn required_canonical_missing_generates_install_approval_without_installing() {
+        let mut environment = evidence();
+        environment.observations.push(CapabilityObservations {
+            capability_id: "supabase-service".into(),
+            observations: vec![EnvironmentObservation {
+                source_category: EvidenceSourceCategory::CapabilityRegistry,
+                kind: EvidenceKind::RegistryEntry,
+                result: EvidenceResult::Present,
+                version: None,
+                detail: None,
+                observed_at: "2026-09-21T10:00:00Z".into(),
+            }],
+        });
+        let result = prepare_project(&required_service_context("Supabase"), &environment, &snapshot()).unwrap();
+        let capability = result.required_capabilities.iter().find(|item| item.capability_id == "supabase-service").unwrap();
+        assert_eq!(capability.status, CapabilityStatus::NoEvidence);
+        assert!(result.approval_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "INSTALL_REQUIRES_APPROVAL"));
+        assert!(!result.bootstrap_actions.iter().any(|item| item.action == "INSTALL"));
+    }
+
+    #[test]
+    fn optional_no_evidence_does_not_inherit_required_install_approval() {
+        assert_eq!(missing_capability_action(false).0, "NO_ACTION");
+        assert_ne!(missing_capability_action(false).0, "INSTALL_REQUIRES_APPROVAL");
     }
 
     #[test]

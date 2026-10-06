@@ -611,6 +611,52 @@ export interface ProjectInfo {
   installedCount: number;
 }
 
+export interface PreparedProjectCapability {
+  capability_id: string;
+  capability_type: string;
+  reason: string;
+  status: string;
+  evidence_ref: string | null;
+}
+
+export interface PreparedProjectAction {
+  capability_id: string;
+  action: string;
+  reason: string;
+}
+
+export interface PreparedProjectCorpusEvidence {
+  manifest_schema_version: string;
+  generation_id: string;
+  version: string;
+  provenance: string;
+  fetched_at: string;
+  generated_at: string;
+  freshness: string;
+  integrity: string;
+  count: number;
+}
+
+export interface PreparedProjectInfo {
+  schemaVersion: string;
+  projectId: string;
+  displayName: string;
+  clientOrOwner: string;
+  projectType: string;
+  readiness: "READY" | "READY_WITH_WARNINGS" | "BLOCKED" | "CONTEXT_INSUFFICIENT";
+  contextStatus: string;
+  agents: PreparedProjectCapability[];
+  requiredCapabilities: PreparedProjectCapability[];
+  recommendedCapabilities: PreparedProjectCapability[];
+  excludedCapabilities: PreparedProjectCapability[];
+  gaps: PreparedProjectCapability[];
+  staleStates: unknown[];
+  approvalActions: PreparedProjectAction[];
+  nextOperation: string;
+  corpusEvidence: PreparedProjectCorpusEvidence;
+  preparedAt: string;
+}
+
 // =========================================================
 // UI-only types (frontend stores, command palette, etc.)
 // =========================================================

@@ -127,8 +127,8 @@ class UiStore {
   /** Tool selected in the Tools console; null = let it auto-pick. Set by the
       Dashboard "Coverage by tool" rows so a click lands on that tool's console. */
   toolsSelected: Tool | null = $state(null);
-  /** Absolute path of the project open in the Projects detail pane; null = the
-      project list. In ui so the title-bar back/forward restores it. */
+  /** Project navigation key. Folder projects use their absolute path; prepared
+      projects use a prepared:project_id key. null = the project list. */
   projectsSelected: string | null = $state(null);
   /** Key of the team open in the Teams detail pane (`preset:<slug>` /
       `saved:<id>`); null = the team list. In ui so back/forward restores it. */
@@ -189,7 +189,7 @@ class UiStore {
     this.commitNav();
   }
 
-  /** Open the Projects detail pane for a project path (null = back to the list).
+  /** Open the Projects detail pane for a project navigation key (null = back to the list).
       A nav location, so the title-bar back button returns to the list. Also
       switches to the Projects section, so deep-links from the Dashboard
       ("mirror-mesh" row / sunburst slice) actually land on the project. */

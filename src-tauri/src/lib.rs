@@ -7,6 +7,7 @@
 mod commands;
 pub(crate) mod agent_runtime;
 pub(crate) mod local_adapter;
+mod prepared_projects;
 mod corpus;
 mod error;
 mod github;
@@ -185,6 +186,8 @@ pub fn run() {
             install::tool_versions,
             install::reveal_path,
             install::projects_list,
+            prepared_projects::prepared_projects_list,
+            prepared_projects::prepared_project_get,
             install::loadout_export,
             install::loadout_import,
         ])

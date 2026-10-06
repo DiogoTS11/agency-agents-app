@@ -64,9 +64,39 @@
     return rowsByProject.get(path) ?? [];
   }
 
+  function preparedKey(projectId: string): string {
+    return "prepared:" + projectId;
+  }
+
+  function preparedId(key: string | null): string | null {
+    return key?.startsWith("prepared:") ? key.slice("prepared:".length) : null;
+  }
+
+  function capabilityLabel(value: string): string {
+    return value.replace(/^gap-/, "").replace(/[-_]+/g, " ");
+  }
+
+  function readinessTone(value: string): "success" | "warning" | "danger" | "neutral" {
+    if (value === "READY") return "success";
+    if (value === "READY_WITH_WARNINGS") return "warning";
+    if (value === "BLOCKED") return "danger";
+    return "neutral";
+  }
+
+  const selectedPrepared = $derived(
+    preparedId(ui.projectsSelected)
+      ? projects.preparedById(preparedId(ui.projectsSelected)!)
+      : null,
+  );
+  const selectedNeeded = $derived(
+    selectedPrepared
+      ? [...selectedPrepared.requiredCapabilities, ...selectedPrepared.recommendedCapabilities]
+      : [],
+  );
+
   // ── Selected project (detail pane). Resolve against the live list so a stale
   //    path (e.g. removed) falls back to the list rather than an empty detail. ──
-  const selected = $derived(projects.list.find((p) => p.path === ui.projectsSelected) ?? null);
+  const selected = $derived(preparedId(ui.projectsSelected) ? null : (projects.list.find((p) => p.path === ui.projectsSelected) ?? null));
 
   // ── Group the selected project's roster by division (collapsible). ──
   const OTHER = "__other";
@@ -183,7 +213,93 @@
 </script>
 
 <section class="pr">
-  {#if selected}
+  {#if selectedPrepared}
+    <header class="pr-head detail">
+      <span class="dh-ic"><LayersIcon size={20} /></span>
+      <div class="dh-id">
+        <h2 class="dh-label">{selectedPrepared.displayName}</h2>
+        <span class="dh-path">{selectedPrepared.projectId}</span>
+      </div>
+      <Pill tone={readinessTone(selectedPrepared.readiness)}>{selectedPrepared.readiness.replaceAll("_", " ")}</Pill>
+      <button class="btn" onclick={() => ui.selectProject(null)}>Back to projects</button>
+    </header>
+
+    <div class="scroll prepared-detail">
+      <section class="prep-summary">
+        <div class="prep-grid">
+          <div><span class="prep-k">Context</span><strong>{selectedPrepared.contextStatus}</strong></div>
+          <div><span class="prep-k">Next operation</span><strong>{selectedPrepared.nextOperation.replaceAll("_", " ")}</strong></div>
+          <div><span class="prep-k">Selected agents</span><strong>{selectedPrepared.agents.length}</strong></div>
+          <div><span class="prep-k">Gaps</span><strong>{selectedPrepared.gaps.length}</strong></div>
+        </div>
+        <p class="prep-meta">{selectedPrepared.clientOrOwner} · {selectedPrepared.projectType}</p>
+        <p class="prep-meta">Prepared {new Date(selectedPrepared.preparedAt).toLocaleString()} · corpus {selectedPrepared.corpusEvidence.version} / {selectedPrepared.corpusEvidence.generation_id}</p>
+      </section>
+
+      <section class="prep-section">
+        <h3>Selected agents</h3>
+        {#if selectedPrepared.agents.length === 0}
+          <p class="prep-empty">No existing agent matched this preparation.</p>
+        {:else}
+          <ul class="prep-list">
+            {#each selectedPrepared.agents as item (item.capability_id)}
+              <li><strong>{capabilityLabel(item.capability_id)}</strong><span>{item.reason}</span><Pill tone="success">{item.status.replaceAll("_", " ")}</Pill></li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      <section class="prep-section">
+        <h3>Required / recommended capabilities</h3>
+        {#if selectedNeeded.length === 0}
+          <p class="prep-empty">No additional matched capability recorded.</p>
+        {:else}
+          <ul class="prep-list">
+            {#each selectedNeeded as item (item.capability_id)}
+              <li><strong>{capabilityLabel(item.capability_id)}</strong><span>{item.reason}</span><Pill tone={item.status === "GAP" || item.status === "NO_EVIDENCE" ? "warning" : "info"}>{item.status.replaceAll("_", " ")}</Pill></li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      <section class="prep-section">
+        <h3>Gaps / warnings</h3>
+        {#if selectedPrepared.gaps.length === 0}
+          <p class="prep-empty">No preparation gaps.</p>
+        {:else}
+          <ul class="prep-list">
+            {#each selectedPrepared.gaps as item (item.capability_id)}
+              <li><strong>{capabilityLabel(item.capability_id)}</strong><span>{item.reason}</span><Pill tone="warning">{item.status.replaceAll("_", " ")}</Pill></li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      <section class="prep-section">
+        <h3>Excluded / not needed</h3>
+        {#if selectedPrepared.excludedCapabilities.length === 0}
+          <p class="prep-empty">No explicit exclusions.</p>
+        {:else}
+          <ul class="prep-list compact">
+            {#each selectedPrepared.excludedCapabilities as item (item.capability_id)}
+              <li><strong>{capabilityLabel(item.capability_id)}</strong><span>{item.reason}</span></li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      {#if selectedPrepared.approvalActions.length > 0}
+        <section class="prep-section">
+          <h3>Review required</h3>
+          <ul class="prep-list">
+            {#each selectedPrepared.approvalActions as action (action.capability_id + action.action)}
+              <li><strong>{capabilityLabel(action.capability_id)}</strong><span>{action.reason}</span><Pill tone="danger">{action.action.replaceAll("_", " ")}</Pill></li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+    </div>
+  {:else if selected}
     <!-- ── Detail ── -->
     <header class="pr-head detail">
       <span class="dh-ic"><FolderIcon size={20} /></span>
@@ -242,7 +358,7 @@
       </div>
     </header>
 
-    {#if projects.list.length === 0}
+    {#if projects.list.length === 0 && projects.prepared.length === 0}
       <div class="scroll">
         <EmptyState title={i18n.t("projects.emptyTitle")}>
           {#snippet icon()}<FolderIcon size={48} />{/snippet}
@@ -260,6 +376,25 @@
       </div>
     {:else}
       <ul class="rows">
+        {#if projects.prepared.length > 0}
+          <li class="section-label">Prepared projects</li>
+          {#each projects.prepared as project (project.projectId)}
+            <li class="proj prepared">
+              <button class="proj-row" onclick={() => ui.selectProject(preparedKey(project.projectId))}>
+                <span class="proj-ic"><LayersIcon size={18} /></span>
+                <span class="proj-body">
+                  <span class="proj-label">{project.displayName}</span>
+                  <span class="proj-path">{project.projectId} · {project.agents.length} selected · {project.gaps.length} gaps</span>
+                </span>
+                <Pill tone={readinessTone(project.readiness)}>{project.readiness.replaceAll("_", " ")}</Pill>
+                <ChevronRight size={16} class="proj-go" />
+              </button>
+            </li>
+          {/each}
+        {/if}
+        {#if projects.list.length > 0}
+          <li class="section-label">Registered / deployed folders</li>
+        {/if}
         {#each projects.list as project (project.path)}
           <li class="proj">
             <button class="proj-row" onclick={() => ui.selectProject(project.path)}>
@@ -393,5 +528,39 @@
   /* ── Remove-project confirm dialog ── */
   .del-body { color: var(--color-text-primary); font-size: var(--text-body); }
   .del-note { margin-top: var(--space-3); color: var(--color-text-muted); font-size: var(--text-body-sm); line-height: 1.5; }
+
+  .section-label {
+    list-style: none;
+    padding: var(--space-2) var(--space-2) 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-caption);
+    font-weight: var(--fw-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .proj.prepared { border-color: color-mix(in srgb, var(--color-brand) 28%, var(--color-border)); }
+  .prepared-detail { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+  .prep-summary, .prep-section {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface-raised);
+    padding: var(--space-4);
+  }
+  .prep-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+  .prep-grid > div { display: flex; flex-direction: column; gap: 4px; }
+  .prep-k { color: var(--color-text-muted); font-size: var(--text-caption); text-transform: uppercase; letter-spacing: .05em; }
+  .prep-grid strong { color: var(--color-text-primary); font-size: var(--text-body-sm); }
+  .prep-meta { margin-top: var(--space-2); color: var(--color-text-muted); font-size: var(--text-caption); }
+  .prep-section h3 { margin: 0 0 var(--space-3); font-size: var(--text-body); color: var(--color-text-primary); }
+  .prep-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .prep-list li { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(240px, 1.8fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-2); border-radius: var(--radius-md); background: var(--color-surface-sunken); }
+  .prep-list.compact li { grid-template-columns: minmax(180px, .8fr) minmax(240px, 1.8fr); }
+  .prep-list strong { color: var(--color-text-primary); font-size: var(--text-body-sm); text-transform: capitalize; }
+  .prep-list span { color: var(--color-text-secondary); font-size: var(--text-body-sm); }
+  .prep-empty { color: var(--color-text-muted); font-size: var(--text-body-sm); margin: 0; }
+  @media (max-width: 900px) {
+    .prep-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .prep-list li, .prep-list.compact li { grid-template-columns: 1fr; }
+  }
 
 </style>

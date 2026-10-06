@@ -1012,9 +1012,8 @@ fn first_version_line(s: &str) -> Option<String> {
     })
 }
 
-async fn probe_version(tool: &str) -> Option<String> {
-    let (bin, args) = version_cmd(tool)?;
-    let mut command = headless_tokio_command(bin);
+async fn run_version_probe(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = headless_tokio_command(program);
     crate::util::proc::sanitize_tokio(&mut command);
     command.args(args);
     let fut = command.output();
@@ -1023,6 +1022,36 @@ async fn probe_version(tool: &str) -> Option<String> {
             .or_else(|| first_version_line(&String::from_utf8_lossy(&o.stderr))),
         _ => None,
     }
+}
+
+async fn probe_version(tool: &str) -> Option<String> {
+    let (bin, args) = version_cmd(tool)?;
+
+    // Prefer the least-privilege direct process launch everywhere.
+    if let Some(version) = run_version_probe(bin, &args).await {
+        return Some(version);
+    }
+
+    // npm/global Windows tools commonly expose .cmd/.ps1 shims that
+    // CreateProcess cannot resolve from a bare executable name. The registry
+    // is embedded trusted application data, not user input, so a narrowly
+    // scoped cmd.exe fallback is safe here and mirrors shell resolution.
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = headless_tokio_command("cmd.exe");
+        crate::util::proc::sanitize_tokio(&mut command);
+        command.args(["/D", "/S", "/C", bin]);
+        command.args(&args);
+        let fut = command.output();
+        if let Ok(Ok(o)) = tokio::time::timeout(std::time::Duration::from_secs(3), fut).await {
+            if o.status.success() {
+                return first_version_line(&String::from_utf8_lossy(&o.stdout))
+                    .or_else(|| first_version_line(&String::from_utf8_lossy(&o.stderr)));
+            }
+        }
+    }
+
+    None
 }
 
 /// Best-effort version probe across all supported tools, run concurrently with a

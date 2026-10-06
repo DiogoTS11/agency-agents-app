@@ -5,6 +5,8 @@
 //! in `commands::*`.
 
 mod commands;
+pub(crate) mod agent_runtime;
+pub(crate) mod local_adapter;
 mod corpus;
 mod error;
 mod github;
@@ -186,8 +188,16 @@ pub fn run() {
             install::loadout_export,
             install::loadout_import,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit { .. }) {
+                use tauri::Manager;
+                if let Some(state) = app.try_state::<state::AppState>() {
+                    tauri::async_runtime::block_on(state.local_adapter.stop());
+                }
+            }
+        });
 }
 
 // =============================================================

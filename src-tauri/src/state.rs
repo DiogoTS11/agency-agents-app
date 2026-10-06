@@ -14,6 +14,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::commands::settings::{self, SettingsLoadState};
 use crate::commands::updater::UpdaterState;
 use crate::error::AppError;
+use crate::local_adapter::{load_machine_runtime_config, LocalAdapterManager, SystemCredentialStore};
 
 /// Shared application state. Registered via `Builder::manage()`.
 pub struct AppState {
@@ -49,6 +50,10 @@ pub struct AppState {
     /// staleness. See `crate::commands::updater::UpdaterState` for the
     /// shape and the rationale.
     pub updater_state: Arc<RwLock<UpdaterState>>,
+
+    /// App-owned localhost adapter lifecycle. The listener is started only
+    /// with an explicit machine-local descriptor; no port is invented here.
+    pub local_adapter: LocalAdapterManager,
 }
 
 impl AppState {
@@ -84,6 +89,7 @@ impl AppState {
             corpus_refresh_in_flight: Arc::new(Mutex::new(())),
             settings: Arc::new(RwLock::new(settings_state)),
             updater_state: crate::commands::updater::empty_state(),
+            local_adapter: LocalAdapterManager::new(),
         })
     }
 
@@ -133,6 +139,22 @@ pub fn initialize<R: tauri::Runtime>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
     let state = AppState::build()?;
+    let adapter_config = load_machine_runtime_config()?;
+    let adapter = state.local_adapter.clone();
+    let app_data_dir = state.app_data_dir.clone();
+    let credentials = Arc::new(SystemCredentialStore);
+    let descriptor = tauri::async_runtime::block_on(adapter.start(
+        adapter_config,
+        app_data_dir,
+        credentials,
+    ))?;
+    tracing::info!(
+        host = %descriptor.host,
+        port = descriptor.port,
+        contract_version = %descriptor.contract_version,
+        auth_ref = %descriptor.auth_ref,
+        "agent agency localhost adapter started"
+    );
     app.manage(state);
     Ok(())
 }

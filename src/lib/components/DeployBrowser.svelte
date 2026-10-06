@@ -20,6 +20,7 @@
   import Input from "./Input.svelte";
   import DestructiveConfirm from "./DestructiveConfirm.svelte";
   import { corpus } from "$lib/stores/corpus.svelte";
+  import { compareAgentOrder } from "$lib/util/agentOrder";
   import { install, SUPPORTED_TOOLS } from "$lib/stores/install.svelte";
   import { teams } from "$lib/stores/teams.svelte";
   import { toast } from "$lib/stores/toast.svelte";
@@ -154,7 +155,7 @@
       label: slug === OTHER ? i18n.t("common.other") : corpus.labelOf(slug),
       color: slug === OTHER ? "#94A3B8" : corpus.colorOf(slug),
       icon: slug === OTHER ? "HelpCircle" : corpus.iconOf(slug),
-      rows: rows.slice().sort((a, b) => a.name.localeCompare(b.name)),
+      rows: rows.slice().sort(compareAgentOrder),
     }));
     out.sort((a, b) => (a.slug === OTHER ? 1 : b.slug === OTHER ? -1 : a.label.localeCompare(b.label)));
     return out;

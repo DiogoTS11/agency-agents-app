@@ -348,6 +348,42 @@ export interface Agent {
   vibe: string | null;
   /** Markdown body (persona) — empty in list views. */
   body: string;
+  /** Optional structured "operational card" summary from a frontmatter
+      `operational:` block (Digital Flow addition, Review Packet §49/§53).
+      `null`/absent for any agent without that block — additive, never
+      required; the detail view falls back to today's rendering. */
+  operational?: Operational | null;
+}
+
+/** Skill groupings inside an {@link Operational} card — reuses the DF
+    PRIMARY/COMPLEMENTARY/SPECIALIST role vocabulary (Review Packet §30),
+    not a new classification. */
+export interface OperationalSkills {
+  primary: string[];
+  complementary: string[];
+  specialist: string[];
+}
+
+/** A compact "operational card" summary for an agent, sourced entirely
+    from an optional frontmatter `operational:` block. Every field is
+    optional so a partially-filled card still renders what it has. */
+export interface Operational {
+  phase?: string | null;
+  role?: string | null;
+  whatItDoes?: string | null;
+  whenToUse?: string | null;
+  whenNotToUse?: string | null;
+  skills?: OperationalSkills;
+  reviewer?: string | null;
+  workflows?: string[];
+  inputs?: string[];
+  outputs?: string[];
+  deploymentStatus?: string | null;
+  /** Optional explicit sort key (Agent Ordering Standard, Review Packet
+      §84.8/§102). `null`/absent means this agent has no defined production
+      sequence and falls back to legacy alphabetical order. Agents may
+      legitimately share the same value (a real parallel phase). */
+  order?: number | null;
 }
 
 /**

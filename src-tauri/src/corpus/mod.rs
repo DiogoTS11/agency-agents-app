@@ -30,10 +30,16 @@
 mod parse;
 
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::{DateTime, Duration, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::github::extract_github_repo;
@@ -143,6 +149,83 @@ struct StoredMeta {
     commit: Option<String>,
     fetched_at: String,
     count: u32,
+}
+
+#[derive(Debug, Clone)]
+struct VerifiedSourceRefresh {
+    version: String,
+    commit: Option<String>,
+    fetched_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SnapshotManifest {
+    schema_version: String,
+    generation_id: String,
+    index: ManifestFile,
+    meta: ManifestMeta,
+    generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestFile {
+    file: String,
+    sha256: String,
+    count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestMeta {
+    file: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CorpusSnapshot {
+    pub index: BTreeMap<String, CorpusEntry>,
+    pub meta: CorpusMeta,
+    pub provenance: &'static str,
+    pub generation_id: String,
+    pub generated_at: String,
+}
+
+struct RefreshLock {
+    file: std::fs::File,
+}
+
+impl RefreshLock {
+    fn acquire(app_data_dir: &Path) -> Result<Self, AppError> {
+        let state = state_dir(app_data_dir);
+        std::fs::create_dir_all(&state).map_err(|e| AppError::Io {
+            message: format!("create corpus state dir {}: {e}", state.display()),
+        })?;
+        let path = state.join("corpus-refresh.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| AppError::Io { message: format!("open {}: {e}", path.display()) })?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Self { file }),
+            Err(e)
+                if e.kind() == ErrorKind::WouldBlock
+                    || e.raw_os_error() == Some(33) =>
+            {
+                Err(AppError::CorpusRefreshBusy)
+            }
+            Err(e) => Err(AppError::Io { message: format!("lock {}: {e}", path.display()) }),
+        }
+    }
+}
+
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 impl From<StoredMeta> for CorpusMeta {
@@ -401,6 +484,160 @@ fn meta_path(app_data_dir: &Path) -> PathBuf {
     state_dir(app_data_dir).join("corpus-meta.json")
 }
 
+fn manifest_path(app_data_dir: &Path) -> PathBuf {
+    state_dir(app_data_dir).join("corpus-manifest.json")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+async fn write_snapshot_files(
+    app_data_dir: &Path,
+    index_bytes: &[u8],
+    meta_bytes: &[u8],
+    count: u32,
+) -> Result<(), AppError> {
+    let sdir = state_dir(app_data_dir);
+    tokio::fs::create_dir_all(&sdir).await.map_err(|e| AppError::Io {
+        message: format!("create state dir {}: {e}", sdir.display()),
+    })?;
+    atomic_write(&index_path(app_data_dir), index_bytes).await?;
+    atomic_write(&meta_path(app_data_dir), meta_bytes).await?;
+    let manifest = SnapshotManifest {
+        schema_version: "1.0.0".into(),
+        generation_id: Uuid::new_v4().to_string(),
+        index: ManifestFile {
+            file: "corpus-index.json".into(),
+            sha256: sha256_hex(index_bytes),
+            count,
+        },
+        meta: ManifestMeta {
+            file: "corpus-meta.json".into(),
+            sha256: sha256_hex(meta_bytes),
+        },
+        generated_at: Utc::now().to_rfc3339(),
+    };
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|e| AppError::Internal {
+        message: format!("serialize corpus-manifest.json: {e}"),
+    })?;
+    // The manifest is the commit marker and is therefore always written last.
+    atomic_write(&manifest_path(app_data_dir), &manifest_bytes).await
+}
+
+pub(crate) async fn read_validated_snapshot(
+    app_data_dir: &Path,
+    max_age_seconds: i64,
+    now: DateTime<Utc>,
+) -> Result<CorpusSnapshot, AppError> {
+    read_validated_snapshot_inner(app_data_dir, max_age_seconds, now, None).await
+}
+
+#[cfg(test)]
+async fn read_validated_snapshot_with_manifest_sequence(
+    app_data_dir: &Path,
+    max_age_seconds: i64,
+    now: DateTime<Utc>,
+    manifest_sequence: &mut std::collections::VecDeque<Vec<u8>>,
+) -> Result<CorpusSnapshot, AppError> {
+    read_validated_snapshot_inner(
+        app_data_dir,
+        max_age_seconds,
+        now,
+        Some(manifest_sequence),
+    )
+    .await
+}
+
+async fn read_validated_snapshot_inner(
+    app_data_dir: &Path,
+    max_age_seconds: i64,
+    now: DateTime<Utc>,
+    mut manifest_sequence: Option<&mut std::collections::VecDeque<Vec<u8>>>,
+) -> Result<CorpusSnapshot, AppError> {
+    async fn read_manifest(
+        path: PathBuf,
+        manifest_sequence: &mut Option<&mut std::collections::VecDeque<Vec<u8>>>,
+    ) -> std::io::Result<Vec<u8>> {
+        if let Some(sequence) = manifest_sequence.as_deref_mut() {
+            if let Some(bytes) = sequence.pop_front() {
+                return Ok(bytes);
+            }
+        }
+        tokio::fs::read(path).await
+    }
+
+    for _attempt in 0..3 {
+        let manifest_bytes_a = match read_manifest(manifest_path(app_data_dir), &mut manifest_sequence).await {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(AppError::CorpusManifestMissing),
+            Err(_) => return Err(AppError::CorpusStateMissing),
+        };
+        let manifest: SnapshotManifest = serde_json::from_slice(&manifest_bytes_a)
+            .map_err(|_| AppError::CorpusManifestMalformed)?;
+        if manifest.schema_version != "1.0.0" {
+            return Err(AppError::CorpusSchemaUnsupported);
+        }
+        if manifest.generation_id.parse::<Uuid>().is_err()
+            || manifest.index.file != "corpus-index.json"
+            || manifest.meta.file != "corpus-meta.json"
+            || !valid_sha256(&manifest.index.sha256)
+            || !valid_sha256(&manifest.meta.sha256)
+            || DateTime::parse_from_rfc3339(&manifest.generated_at).is_err()
+        {
+            return Err(AppError::CorpusManifestMalformed);
+        }
+        let index_bytes = tokio::fs::read(index_path(app_data_dir)).await
+            .map_err(|e| if e.kind() == ErrorKind::NotFound { AppError::CorpusIndexMissing } else { AppError::CorpusStateMissing })?;
+        let meta_bytes = tokio::fs::read(meta_path(app_data_dir)).await
+            .map_err(|e| if e.kind() == ErrorKind::NotFound { AppError::CorpusMetaMissing } else { AppError::CorpusStateMissing })?;
+        if sha256_hex(&index_bytes) != manifest.index.sha256 || sha256_hex(&meta_bytes) != manifest.meta.sha256 {
+            continue;
+        }
+        let index: BTreeMap<String, CorpusEntry> = serde_json::from_slice(&index_bytes)
+            .map_err(|_| AppError::CorpusIndexMalformed)?;
+        let stored: StoredMeta = serde_json::from_slice(&meta_bytes)
+            .map_err(|_| AppError::CorpusMetaMalformed)?;
+        if stored.count != index.len() as u32 || stored.count != manifest.index.count {
+            return Err(AppError::CorpusCountMismatch);
+        }
+        let fetched = DateTime::parse_from_rfc3339(&stored.fetched_at)
+            .map_err(|_| AppError::CorpusMetaMalformed)?.with_timezone(&Utc);
+        if fetched > now + Duration::seconds(300) {
+            return Err(AppError::CorpusMetaMalformed);
+        }
+        if now.signed_duration_since(fetched).num_seconds() > max_age_seconds {
+            return Err(AppError::CorpusIndexStale);
+        }
+        if stored.version == BASELINE_VERSION && stored.commit.is_some() {
+            return Err(AppError::CorpusMetaMalformed);
+        }
+        if stored.version.trim().is_empty() {
+            return Err(AppError::CorpusMetaMalformed);
+        }
+        let manifest_bytes_b = read_manifest(manifest_path(app_data_dir), &mut manifest_sequence).await
+            .map_err(|_| AppError::CorpusManifestMissing)?;
+        if manifest_bytes_a != manifest_bytes_b {
+            continue;
+        }
+        let provenance = if stored.version == BASELINE_VERSION { "BASELINE" } else { "LIVE" };
+        return Ok(CorpusSnapshot {
+            index,
+            meta: stored.into(),
+            provenance,
+            generation_id: manifest.generation_id,
+            generated_at: manifest.generated_at,
+        });
+    }
+    Err(AppError::CorpusSnapshotInconsistent)
+}
+
 fn catalog_source_path(app_data_dir: &Path) -> PathBuf {
     state_dir(app_data_dir).join("catalog.json")
 }
@@ -461,6 +698,14 @@ pub(crate) fn catalog_root(app_data_dir: &Path, source: &CatalogSource) -> PathB
 /// with `count == 0` so the UI degrades to "no agents" rather than
 /// failing to launch.
 pub async fn resolve_active(app_data_dir: &Path, baseline_dir: &Path) -> Corpus {
+    resolve_active_with_refresh(app_data_dir, baseline_dir, None).await
+}
+
+async fn resolve_active_with_refresh(
+    app_data_dir: &Path,
+    baseline_dir: &Path,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Corpus {
     let source = load_catalog_source(app_data_dir).await;
     let dir = catalog_root(app_data_dir, &source);
 
@@ -503,7 +748,12 @@ pub async fn resolve_active(app_data_dir: &Path, baseline_dir: &Path) -> Corpus 
     // Persist index + meta (best effort — read commands work from the
     // in-memory copy regardless; the on-disk index exists for the
     // reconciliation subsystem built in a later phase).
-    if let Err(e) = persist(app_data_dir, &corpus).await {
+    if let Some(refresh) = verified_refresh {
+        corpus.meta.version = refresh.version.clone();
+        corpus.meta.commit = refresh.commit.clone();
+        corpus.meta.fetched_at = refresh.fetched_at.clone();
+    }
+    if let Err(e) = persist(app_data_dir, &corpus, verified_refresh).await {
         tracing::warn!("corpus: persist index/meta failed: {e}");
     }
 
@@ -704,29 +954,34 @@ async fn seed_from_baseline(baseline: &Path, dest: &Path, categories: &[String])
 /// when none exists (fresh baseline seed) it is stamped once with the
 /// current UTC time so subsequent launches don't re-stamp it (keeps the
 /// index byte-stable across launches).
-async fn persist(app_data_dir: &Path, corpus: &Corpus) -> Result<(), AppError> {
-    let sdir = state_dir(app_data_dir);
-    tokio::fs::create_dir_all(&sdir)
-        .await
-        .map_err(|e| AppError::Io {
-            message: format!("create state dir {}: {e}", sdir.display()),
-        })?;
+async fn persist(
+    app_data_dir: &Path,
+    corpus: &Corpus,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Result<(), AppError> {
+    let _lock = RefreshLock::acquire(app_data_dir)?;
 
     // Index — deterministic, no timestamp.
     let index_bytes = corpus.index_json()?;
-    atomic_write(&index_path(app_data_dir), &index_bytes).await?;
 
     // Meta — preserve prior fetched_at/commit if present; else stamp now.
     let prior = load_stored_meta(app_data_dir).await;
-    let fetched_at = prior
-        .as_ref()
-        .map(|m| m.fetched_at.clone())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    let commit = prior.as_ref().and_then(|m| m.commit.clone());
+    let (version, commit, fetched_at) = if let Some(refresh) = verified_refresh {
+        (refresh.version.clone(), refresh.commit.clone(), refresh.fetched_at.clone())
+    } else {
+        (
+            corpus.meta.version.clone(),
+            prior.as_ref().and_then(|m| m.commit.clone()),
+            prior
+                .as_ref()
+                .map(|m| m.fetched_at.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+        )
+    };
 
     let stored = StoredMeta {
-        version: corpus.meta.version.clone(),
+        version,
         commit,
         fetched_at,
         count: corpus.count(),
@@ -734,8 +989,7 @@ async fn persist(app_data_dir: &Path, corpus: &Corpus) -> Result<(), AppError> {
     let meta_bytes = serde_json::to_vec_pretty(&stored).map_err(|e| AppError::Internal {
         message: format!("serialize corpus-meta.json: {e}"),
     })?;
-    atomic_write(&meta_path(app_data_dir), &meta_bytes).await?;
-    Ok(())
+    write_snapshot_files(app_data_dir, &index_bytes, &meta_bytes, corpus.count()).await
 }
 
 /// Load `corpus-meta.json` if present + parseable, else `None`.
@@ -754,6 +1008,7 @@ async fn load_stored_meta(app_data_dir: &Path) -> Option<StoredMeta> {
 /// dirs are swapped in, so a partial/failed download never corrupts the
 /// live `corpus/`.
 async fn refresh(app_data_dir: &Path) -> Result<CorpusMeta, AppError> {
+    let _lock = RefreshLock::acquire(app_data_dir)?;
     // A read-only catalog source (Bundled-app-data is fine to refresh; a
     // user clone we lack permission to manage is NOT) must never be written by
     // a tarball refresh. Bundled writes into app data, so it's always allowed.
@@ -793,14 +1048,7 @@ async fn refresh(app_data_dir: &Path) -> Result<CorpusMeta, AppError> {
 
     // Persist a fresh meta (overwrite fetched_at/version this time —
     // unlike the baseline persist which preserves prior fetched_at).
-    let sdir = state_dir(app_data_dir);
-    tokio::fs::create_dir_all(&sdir)
-        .await
-        .map_err(|e| AppError::Io {
-            message: format!("create state dir {}: {e}", sdir.display()),
-        })?;
     let index_bytes = corpus.index_json()?;
-    atomic_write(&index_path(app_data_dir), &index_bytes).await?;
     let stored = StoredMeta {
         version: version.clone(),
         commit: None,
@@ -810,7 +1058,7 @@ async fn refresh(app_data_dir: &Path) -> Result<CorpusMeta, AppError> {
     let meta_bytes = serde_json::to_vec_pretty(&stored).map_err(|e| AppError::Internal {
         message: format!("serialize corpus-meta.json: {e}"),
     })?;
-    atomic_write(&meta_path(app_data_dir), &meta_bytes).await?;
+    write_snapshot_files(app_data_dir, &index_bytes, &meta_bytes, corpus.count()).await?;
 
     Ok(corpus.meta)
 }
@@ -1150,7 +1398,7 @@ async fn provision_managed() -> Result<PathBuf, AppError> {
 /// Pull the active catalog root up to date. Git checkout → `git pull --ff-only`;
 /// otherwise a tarball refresh into the root. Read-only sources are rejected by
 /// the caller; Bundled refreshes its app-data copy.
-async fn pull_active(app_data_dir: &Path) -> Result<(), AppError> {
+async fn pull_active(app_data_dir: &Path) -> Result<VerifiedSourceRefresh, AppError> {
     let source = load_catalog_source(app_data_dir).await;
     if matches!(&source, CatalogSource::UserClone { manage: false, .. }) {
         return Err(AppError::InvalidArgument {
@@ -1159,11 +1407,25 @@ async fn pull_active(app_data_dir: &Path) -> Result<(), AppError> {
     }
     let root = catalog_root(app_data_dir, &source);
     if has_git_dir(&root) && git_available().await {
-        run_git(&["-C", &root.to_string_lossy(), "pull", "--ff-only"], None).await?;
-        Ok(())
+        let root_arg = root.to_string_lossy().to_string();
+        run_git(&["-C", &root_arg, "pull", "--ff-only"], None).await?;
+        let commit = run_git(&["-C", &root_arg, "rev-parse", "HEAD"], None)
+            .await?
+            .trim()
+            .to_string();
+        Ok(VerifiedSourceRefresh {
+            version: format!("git:{commit}"),
+            commit: Some(commit),
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+        })
     } else {
         // Tarball refresh writes into the active root (refresh() resolves it).
-        refresh(app_data_dir).await.map(|_| ())
+        let meta = refresh(app_data_dir).await?;
+        Ok(VerifiedSourceRefresh {
+            version: meta.version,
+            commit: meta.commit,
+            fetched_at: meta.fetched_at,
+        })
     }
 }
 
@@ -1332,16 +1594,20 @@ pub async fn catalog_source_set(
 
     let adir = app_data_dir(&app)?;
     save_catalog_source(&adir, &source).await?;
-    rebuild_corpus(&app, &state).await
+    rebuild_corpus(&app, &state, None).await
 }
 
 /// Rebuild the in-memory corpus from the currently-persisted source and swap
 /// the memoized `Arc`, so every view reflects the latest catalog state. Shared
 /// by source switching, provisioning, and pull.
-async fn rebuild_corpus(app: &AppHandle, state: &AppState) -> Result<CorpusMeta, AppError> {
+async fn rebuild_corpus(
+    app: &AppHandle,
+    state: &AppState,
+    verified_refresh: Option<&VerifiedSourceRefresh>,
+) -> Result<CorpusMeta, AppError> {
     let adir = app_data_dir(app)?;
     let bdir = baseline_dir(app)?;
-    let fresh = Arc::new(resolve_active(&adir, &bdir).await);
+    let fresh = Arc::new(resolve_active_with_refresh(&adir, &bdir, verified_refresh).await);
     let meta = fresh.meta();
     {
         let mut cached = state.corpus_cache.lock().await;
@@ -1368,7 +1634,7 @@ pub async fn catalog_provision_managed(
     let path = provision_managed().await?;
     let adir = app_data_dir(&app)?;
     save_catalog_source(&adir, &CatalogSource::Managed { path: path.to_string_lossy().to_string() }).await?;
-    rebuild_corpus(&app, &state).await
+    rebuild_corpus(&app, &state, None).await
 }
 
 /// `catalog_pull()` — update the active catalog root (git pull or tarball
@@ -1380,8 +1646,8 @@ pub async fn catalog_pull(
 ) -> Result<CorpusMeta, AppError> {
     state.require_network("catalog_pull").await?;
     let adir = app_data_dir(&app)?;
-    pull_active(&adir).await?;
-    rebuild_corpus(&app, &state).await
+    let verified_refresh = pull_active(&adir).await?;
+    rebuild_corpus(&app, &state, Some(&verified_refresh)).await
 }
 
 /// `catalog_status()` — provenance + freshness of the active catalog (source,
@@ -1760,6 +2026,314 @@ mod tests {
         assert!(corpus_dir(app_data.path()).join("engineering/alpha.md").exists());
         assert!(index_path(app_data.path()).exists());
         assert!(meta_path(app_data.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn verified_source_refresh_rewrites_fresh_live_metadata() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        let refreshed_at = Utc::now() - Duration::seconds(10);
+        let verified = VerifiedSourceRefresh {
+            version: "git:a21eb9d".into(),
+            commit: Some("a21eb9d".into()),
+            fetched_at: refreshed_at.to_rfc3339(),
+        };
+
+        let corpus = resolve_active_with_refresh(app_data.path(), baseline.path(), Some(&verified)).await;
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+        let snapshot = read_validated_snapshot(app_data.path(), 86_400, refreshed_at + Duration::seconds(1)).await.unwrap();
+
+        assert_eq!(corpus.meta.version, "git:a21eb9d");
+        assert_eq!(stored.version, "git:a21eb9d");
+        assert_eq!(stored.commit.as_deref(), Some("a21eb9d"));
+        assert_eq!(stored.fetched_at, refreshed_at.to_rfc3339());
+        assert_eq!(snapshot.provenance, "LIVE");
+        assert!(DateTime::parse_from_rfc3339(&snapshot.generated_at).is_ok());
+        assert_ne!(snapshot.generated_at, stored.fetched_at, "generation time is independent from source freshness");
+    }
+
+    #[tokio::test]
+    async fn rebuild_without_verified_refresh_preserves_source_freshness() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        let stale_at = (Utc::now() - Duration::hours(48)).to_rfc3339();
+        let stale = StoredMeta {
+            version: "git:old".into(),
+            commit: Some("old".into()),
+            fetched_at: stale_at.clone(),
+            count: 1,
+        };
+        std::fs::create_dir_all(state_dir(app_data.path())).unwrap();
+        std::fs::write(meta_path(app_data.path()), serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
+
+        let corpus = resolve_active(app_data.path(), baseline.path()).await;
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+
+        assert_eq!(corpus.meta.version, "git:old");
+        assert_eq!(stored.fetched_at, stale_at);
+        assert_eq!(stored.commit.as_deref(), Some("old"));
+    }
+
+    #[tokio::test]
+    async fn managed_clone_refresh_metadata_is_live_and_source_specific() {
+        let catalog = tempfile::tempdir().unwrap();
+        write_agent(catalog.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        save_catalog_source(
+            app_data.path(),
+            &CatalogSource::UserClone { path: catalog.path().to_string_lossy().into(), manage: true },
+        )
+        .await
+        .unwrap();
+        let verified = VerifiedSourceRefresh {
+            version: "git:a21eb9d".into(),
+            commit: Some("a21eb9d".into()),
+            fetched_at: Utc::now().to_rfc3339(),
+        };
+
+        let snapshot = resolve_active_with_refresh(app_data.path(), Path::new("missing-baseline"), Some(&verified)).await;
+        let validated = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await.unwrap();
+        let stored: StoredMeta = serde_json::from_slice(&std::fs::read(meta_path(app_data.path())).unwrap()).unwrap();
+
+        assert_eq!(snapshot.meta.count, 1);
+        assert_eq!(validated.provenance, "LIVE");
+        assert_eq!(stored.version, "git:a21eb9d");
+        assert_eq!(stored.commit.as_deref(), Some("a21eb9d"));
+        assert_ne!(stored.version, BASELINE_VERSION);
+    }
+
+    #[tokio::test]
+    async fn snapshot_manifest_is_written_last_and_reader_validates_it() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+
+        let corpus = resolve_active(app_data.path(), baseline.path()).await;
+        let manifest_path = manifest_path(app_data.path());
+        assert!(manifest_path.exists(), "manifest is the snapshot commit marker");
+        let manifest: SnapshotManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let index_bytes = std::fs::read(index_path(app_data.path())).unwrap();
+        let meta_bytes = std::fs::read(meta_path(app_data.path())).unwrap();
+        assert_eq!(manifest.index.count, corpus.count());
+        assert_eq!(manifest.index.sha256, sha256_hex(&index_bytes));
+        assert_eq!(manifest.meta.sha256, sha256_hex(&meta_bytes));
+
+        let snapshot = read_validated_snapshot(
+            app_data.path(),
+            86_400,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(snapshot.index.len(), 1);
+        assert_eq!(snapshot.provenance, "BASELINE");
+    }
+
+    #[test]
+    fn refresh_lock_is_exclusive() {
+        let app_data = tempfile::tempdir().unwrap();
+        let marker = app_data.path().join("lock-held");
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "corpus::tests::lock_holder", "--nocapture"])
+            .env("DF_CORPUS_LOCK_HOLDER_DIR", app_data.path())
+            .spawn()
+            .unwrap();
+        for _ in 0..50 {
+            if marker.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(marker.exists(), "child process must hold the refresh lock");
+        let second = RefreshLock::acquire(app_data.path());
+        match second {
+            Err(AppError::CorpusRefreshBusy) => {}
+            Err(error) => panic!("second lock returned unexpected error: {error}"),
+            Ok(_) => panic!("second lock unexpectedly succeeded"),
+        }
+        assert!(child.wait_with_output().unwrap().status.success());
+        assert!(RefreshLock::acquire(app_data.path()).is_ok());
+    }
+
+    #[test]
+    fn lock_holder() {
+        let Ok(dir) = std::env::var("DF_CORPUS_LOCK_HOLDER_DIR") else {
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        let _lock = RefreshLock::acquire(&dir).unwrap();
+        std::fs::write(dir.join("lock-held"), b"held").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn reader_rejects_changed_snapshot_bytes() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        resolve_active(app_data.path(), baseline.path()).await;
+
+        let mut index = std::fs::read_to_string(index_path(app_data.path())).unwrap();
+        index.push(' ');
+        std::fs::write(index_path(app_data.path()), index).unwrap();
+        let result = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await;
+        assert!(matches!(result, Err(AppError::CorpusSnapshotInconsistent)));
+    }
+
+    #[tokio::test]
+    async fn reader_retries_once_then_accepts_stable_snapshot() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        resolve_active(app_data.path(), baseline.path()).await;
+
+        let manifest_path = manifest_path(app_data.path());
+        let stable = std::fs::read(&manifest_path).unwrap();
+        let mut changed: serde_json::Value = serde_json::from_slice(&stable).unwrap();
+        changed["generation_id"] = serde_json::Value::String(Uuid::new_v4().to_string());
+        let changed = serde_json::to_vec_pretty(&changed).unwrap();
+        let mut sequence = std::collections::VecDeque::from([
+            stable.clone(),
+            changed,
+            stable.clone(),
+            stable,
+        ]);
+
+        let snapshot = read_validated_snapshot_with_manifest_sequence(
+            app_data.path(),
+            86_400,
+            Utc::now(),
+            &mut sequence,
+        )
+        .await
+        .unwrap();
+        assert_eq!(snapshot.provenance, "BASELINE");
+        assert!(sequence.is_empty(), "reader must consume exactly one retry");
+    }
+
+    #[tokio::test]
+    async fn reader_rejects_bad_hash_and_count_without_fallback() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let app_data = tempfile::tempdir().unwrap();
+        resolve_active(app_data.path(), baseline.path()).await;
+
+        let manifest_file = manifest_path(app_data.path());
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_file).unwrap()).unwrap();
+        manifest["index"]["sha256"] = serde_json::Value::String("0".repeat(64));
+        std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let result = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await;
+        assert!(matches!(result, Err(AppError::CorpusSnapshotInconsistent)));
+
+        resolve_active(app_data.path(), baseline.path()).await;
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_file).unwrap()).unwrap();
+        manifest["index"]["count"] = serde_json::Value::from(99_u32);
+        std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let result = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await;
+        assert!(matches!(result, Err(AppError::CorpusCountMismatch)));
+    }
+
+    #[tokio::test]
+    async fn reader_returns_typed_missing_and_malformed_failures() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+
+        for missing in ["manifest", "index", "meta"] {
+            let app_data = tempfile::tempdir().unwrap();
+            resolve_active(app_data.path(), baseline.path()).await;
+            let path = match missing {
+                "manifest" => manifest_path(app_data.path()),
+                "index" => index_path(app_data.path()),
+                _ => meta_path(app_data.path()),
+            };
+            std::fs::remove_file(path).unwrap();
+            let result = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await;
+            assert!(matches!(
+                result,
+                Err(AppError::CorpusManifestMissing)
+                    | Err(AppError::CorpusIndexMissing)
+                    | Err(AppError::CorpusMetaMissing)
+            ));
+        }
+
+        let app_data = tempfile::tempdir().unwrap();
+        resolve_active(app_data.path(), baseline.path()).await;
+        std::fs::write(manifest_path(app_data.path()), b"{}").unwrap();
+        let result = read_validated_snapshot(app_data.path(), 86_400, Utc::now()).await;
+        assert!(matches!(result, Err(AppError::CorpusManifestMalformed)));
+    }
+
+    #[tokio::test]
+    async fn reader_enforces_freshness_and_provenance_contract() {
+        let baseline = tempfile::tempdir().unwrap();
+        write_agent(baseline.path(), "engineering", "alpha", "Alpha", "a");
+        let corpus = build_from_dir(
+            baseline.path(),
+            BASELINE_VERSION,
+            &discover_categories(baseline.path()),
+        )
+        .await
+        .unwrap();
+        let index_bytes = corpus.index_json().unwrap();
+
+        let live_dir = tempfile::tempdir().unwrap();
+        let live_meta = StoredMeta {
+            version: "v-live".into(),
+            commit: None,
+            fetched_at: Utc::now().to_rfc3339(),
+            count: corpus.count(),
+        };
+        let live_meta_bytes = serde_json::to_vec_pretty(&live_meta).unwrap();
+        write_snapshot_files(live_dir.path(), &index_bytes, &live_meta_bytes, corpus.count())
+            .await
+            .unwrap();
+        let live = read_validated_snapshot(live_dir.path(), 86_400, Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(live.provenance, "LIVE");
+
+        let stale_dir = tempfile::tempdir().unwrap();
+        let stale_meta = StoredMeta {
+            version: "v-old".into(),
+            commit: Some("abc123".into()),
+            fetched_at: (Utc::now() - Duration::hours(48)).to_rfc3339(),
+            count: corpus.count(),
+        };
+        let stale_meta_bytes = serde_json::to_vec_pretty(&stale_meta).unwrap();
+        write_snapshot_files(stale_dir.path(), &index_bytes, &stale_meta_bytes, corpus.count())
+            .await
+            .unwrap();
+        let stale = read_validated_snapshot(stale_dir.path(), 86_400, Utc::now()).await;
+        assert!(matches!(stale, Err(AppError::CorpusIndexStale)));
+
+        let invalid_baseline_dir = tempfile::tempdir().unwrap();
+        let invalid_baseline = StoredMeta {
+            version: BASELINE_VERSION.into(),
+            commit: Some("must-be-null".into()),
+            fetched_at: Utc::now().to_rfc3339(),
+            count: corpus.count(),
+        };
+        let invalid_baseline_bytes = serde_json::to_vec_pretty(&invalid_baseline).unwrap();
+        write_snapshot_files(
+            invalid_baseline_dir.path(),
+            &index_bytes,
+            &invalid_baseline_bytes,
+            corpus.count(),
+        )
+        .await
+        .unwrap();
+        let invalid = read_validated_snapshot(
+            invalid_baseline_dir.path(),
+            86_400,
+            Utc::now(),
+        )
+        .await;
+        assert!(matches!(invalid, Err(AppError::CorpusMetaMalformed)));
     }
 
     #[test]

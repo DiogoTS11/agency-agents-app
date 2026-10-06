@@ -32,7 +32,8 @@ tauri-plugin-updater = "2"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["process", "io-util", "rt-multi-thread", "macros", "sync", "time", "net"] }
+axum = "0.7"
 
 # Error handling
 thiserror = "1"
@@ -59,6 +60,7 @@ base64 = "0.22"
 # than incidental.
 sha2 = "0.10"
 hex = "0.4"
+fs2 = "0.4"
 
 # Gzip codec for the bundled catalog (Phase 12a). Used both for
 # decompressing the bundled `formula.json.gz` / `cask.json.gz` and for

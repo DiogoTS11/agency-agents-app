@@ -35,6 +35,7 @@ use crate::{
     corpus,
     error::AppError,
     github::auth::{KeychainSlot, SystemKeychain},
+    prepared_projects,
 };
 
 pub const LOOPBACK_HOST: &str = "127.0.0.1";
@@ -393,6 +394,9 @@ async fn prepare_project(
             Ok(result) => result,
             Err(error) => return map_runtime_error(error),
         };
+    if let Err(error) = prepared_projects::upsert(&state.app_data_dir, &context, &result).await {
+        return map_app_error(error);
+    }
     (
         StatusCode::OK,
         Json(SuccessEnvelope {

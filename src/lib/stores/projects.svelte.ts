@@ -13,11 +13,12 @@
  * Singleton: import `projects` everywhere.
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { i18n } from "$lib/stores/i18n.svelte";
 import { install } from "$lib/stores/install.svelte";
-import type { ProjectInfo } from "$lib/types";
+import type { PreparedProjectInfo, ProjectInfo } from "$lib/types";
 
 const STORAGE_KEY = "agency-agents:projects:v1";
 
@@ -29,6 +30,7 @@ class ProjectsStore {
   /** User-registered project roots, persisted so a project is listed even
       before anything is installed into it. */
   private registered: string[] = $state([]);
+  prepared: PreparedProjectInfo[] = $state([]);
   private hydrated = false;
 
   hydrate(): void {
@@ -74,7 +76,15 @@ class ProjectsStore {
   /** Ensure the registered set + ledger are loaded (panel calls on mount). */
   async refresh(): Promise<void> {
     this.hydrate();
-    await install.reconcile();
+    const [, prepared] = await Promise.all([
+      install.reconcile(),
+      invoke<PreparedProjectInfo[]>("prepared_projects_list"),
+    ]);
+    this.prepared = prepared;
+  }
+
+  preparedById(projectId: string): PreparedProjectInfo | null {
+    return this.prepared.find((item) => item.projectId === projectId) ?? null;
   }
 
   register(path: string): void {

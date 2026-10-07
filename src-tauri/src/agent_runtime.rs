@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::capability_registry::{self, MissingBehavior};
 use crate::corpus::CorpusSnapshot;
 
 pub const PROJECT_CONTEXT_SCHEMA_VERSION: &str = "1.0.0";
@@ -360,7 +361,12 @@ pub fn prepare_project(
     let agents: Vec<_> = required.iter().chain(recommended.iter()).filter(|item| item.capability_type == "ACTIVE_AGENT" && item.status == CapabilityStatus::MatchedExisting).cloned().collect();
     let required_capabilities: Vec<_> = required.iter().filter(|item| item.capability_type != "ACTIVE_AGENT").cloned().collect();
     let recommended_capabilities: Vec<_> = recommended.iter().filter(|item| item.capability_type != "ACTIVE_AGENT").cloned().collect();
-    let gaps: Vec<_> = required.iter().chain(recommended.iter()).filter(|item| matches!(item.status, CapabilityStatus::Gap | CapabilityStatus::NoEvidence)).cloned().collect();
+    let gaps: Vec<_> = required
+        .iter()
+        .filter(|item| matches!(item.status, CapabilityStatus::Gap | CapabilityStatus::NoEvidence))
+        .chain(recommended.iter().filter(|item| item.status == CapabilityStatus::Gap))
+        .cloned()
+        .collect();
     let referenced: BTreeSet<_> = required_capabilities.iter().chain(recommended_capabilities.iter()).map(|item| item.capability_id.as_str()).collect();
     let stale_states = discovery.iter().filter(|item| item.discovery_status == Some(DiscoveryState::Stale) && referenced.contains(item.id.as_str())).cloned().collect::<Vec<_>>();
     let approval_actions = bootstrap_actions.iter().filter(|action| action.action.ends_with("_REQUIRES_APPROVAL")).cloned().collect::<Vec<_>>();
@@ -401,6 +407,32 @@ fn missing_capability_action(required: bool) -> (&'static str, &'static str) {
             "No existing evidence, and not required for this project — not recommended from zero evidence.",
         )
     }
+}
+
+fn missing_operational_capability(
+    behavior: MissingBehavior,
+    required: bool,
+) -> (CapabilityStatus, &'static str, &'static str, Option<String>) {
+    if !required {
+        return (
+            CapabilityStatus::NoEvidence,
+            "NO_ACTION",
+            "Capability is relevant but optional, and no factual availability evidence was supplied.",
+            None,
+        );
+    }
+
+    if behavior == MissingBehavior::Gap {
+        return (
+            CapabilityStatus::Gap,
+            "GAP",
+            "Required workflow capability has no factual environment evidence; keep it visible as a gap.",
+            None,
+        );
+    }
+
+    let (action, reason) = missing_capability_action(true);
+    (CapabilityStatus::NoEvidence, action, reason, None)
 }
 
 fn push_agent_requirement(
@@ -463,7 +495,6 @@ fn push_agent_gap(
 
 fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster: &[RosterAgent]) -> (Vec<PreparedCapability>, Vec<PreparedCapability>, Vec<PreparedCapability>, Vec<BootstrapAction>, Vec<EnvironmentObservation>, Vec<String>) {
     let fields = &context.project_context;
-    let services = &fields.connected_services;
     let mut required = Vec::new();
     let mut recommended = Vec::new();
     let mut actions = Vec::new();
@@ -565,51 +596,98 @@ fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster
         );
     }
 
-    let mut add_capability = |id: &str, kind: &str, marker: &str, reason: &str, is_required: bool| {
-        let relevant = services.iter().any(|value| value.to_lowercase().contains(marker))
-            || (id == "git-cli" && fields.existing_capabilities.iter().any(|value| value.eq_ignore_ascii_case("git")));
-        if !relevant { return; }
-        let found = discovery.iter().find(|record| record.id == id);
-        let (status, action, action_reason, evidence_ref) = match found {
-            Some(record) if record.evidence_problem.is_some() && record.discovery_status.is_none() => (
-                CapabilityStatus::Verify, "VERIFY", "Evidence collection failed; do not infer absence.", Some(format!("discovery:{id}"))
-            ),
-            Some(record) => match record.discovery_status {
-                Some(DiscoveryState::Active) => (CapabilityStatus::Active, "NO_ACTION", "Already active.", Some(format!("discovery:{id}"))),
-                Some(DiscoveryState::Available) => {
-                    let action = if kind == "SERVICE" { "CONNECT_REQUIRES_APPROVAL" } else if kind == "PLUGIN" { "ENABLE_REQUIRES_APPROVAL" } else { "USE_EXISTING" };
-                    (CapabilityStatus::Available, action, "Existing capability is available; any connection or enablement remains approval-gated.", Some(format!("discovery:{id}")))
-                }
-                Some(DiscoveryState::Stale) => (CapabilityStatus::Stale, "RESOLVE_STALE_STATE", "Registry and environment facts disagree; resolve before use.", Some(format!("discovery:{id}"))),
-                Some(DiscoveryState::NeedsCanonicalization) => (CapabilityStatus::Verify, "CANONICALIZE", "Canonical source is unresolved.", Some(format!("discovery:{id}"))),
-                Some(DiscoveryState::Unclassified) => (CapabilityStatus::Verify, "VERIFY", "Detected but not canonically classified.", Some(format!("discovery:{id}"))),
-                Some(DiscoveryState::Missing) => {
-                    let (action, action_reason) = missing_capability_action(is_required);
-                    (CapabilityStatus::NoEvidence, action, action_reason, Some(format!("discovery:{id}")))
-                }
-                Some(DiscoveryState::Registered) | Some(DiscoveryState::Detected) | None => {
-                    let (action, action_reason) = missing_capability_action(is_required);
-                    (CapabilityStatus::NoEvidence, action, action_reason, None)
-                }
-            },
-            None => {
-                let (action, action_reason) = missing_capability_action(is_required);
-                (CapabilityStatus::NoEvidence, action, action_reason, None)
-            }
+    for capability in capability_registry::all() {
+        let Some(is_required) = capability.requirement_for(&signal_text) else {
+            continue;
         };
-        let item = PreparedCapability {
-            capability_id: id.into(), capability_type: kind.into(), reason: reason.into(), status, evidence_ref,
-        };
-        actions.push(BootstrapAction { capability_id: id.into(), action: action.into(), reason: action_reason.into() });
-        if let Some(record) = found { evidence_rows.extend(record.evidence.clone()); }
-        provenance.push(format!("{id}:environment-evidence"));
-        if is_required { required.push(item); } else { recommended.push(item); }
-    };
 
-    add_capability("vercel-cli", "DEPLOYMENT_TOOL", "vercel", "Declared deployment target.", true);
-    add_capability("supabase-service", "SERVICE", "supabase", "Declared application data service.", true);
-    add_capability("resend-service", "SERVICE", "resend", "Declared transactional email service.", true);
-    add_capability("git-cli", "CLI", "git", "Version control for the project repository.", true);
+        let found = discovery
+            .iter()
+            .find(|record| record.id == capability.id);
+        let (status, action, action_reason, evidence_ref) = match found {
+            Some(record)
+                if record.evidence_problem.is_some() && record.discovery_status.is_none() =>
+            {
+                (
+                    CapabilityStatus::Verify,
+                    "VERIFY",
+                    "Evidence collection failed; do not infer absence.",
+                    Some(format!("discovery:{}", capability.id)),
+                )
+            }
+            Some(record) => match record.discovery_status {
+                Some(DiscoveryState::Active) => (
+                    CapabilityStatus::Active,
+                    "NO_ACTION",
+                    "Already active.",
+                    Some(format!("discovery:{}", capability.id)),
+                ),
+                Some(DiscoveryState::Available) => {
+                    let action = if capability.kind == "SERVICE" {
+                        "CONNECT_REQUIRES_APPROVAL"
+                    } else if capability.kind == "PLUGIN" {
+                        "ENABLE_REQUIRES_APPROVAL"
+                    } else {
+                        "USE_EXISTING"
+                    };
+                    (
+                        CapabilityStatus::Available,
+                        action,
+                        "Existing capability is available; any connection or enablement remains approval-gated.",
+                        Some(format!("discovery:{}", capability.id)),
+                    )
+                }
+                Some(DiscoveryState::Stale) => (
+                    CapabilityStatus::Stale,
+                    "RESOLVE_STALE_STATE",
+                    "Registry and environment facts disagree; resolve before use.",
+                    Some(format!("discovery:{}", capability.id)),
+                ),
+                Some(DiscoveryState::NeedsCanonicalization) => (
+                    CapabilityStatus::Verify,
+                    "CANONICALIZE",
+                    "Canonical source is unresolved.",
+                    Some(format!("discovery:{}", capability.id)),
+                ),
+                Some(DiscoveryState::Unclassified) => (
+                    CapabilityStatus::Verify,
+                    "VERIFY",
+                    "Detected but not canonically classified.",
+                    Some(format!("discovery:{}", capability.id)),
+                ),
+                Some(DiscoveryState::Missing)
+                | Some(DiscoveryState::Registered)
+                | Some(DiscoveryState::Detected)
+                | None => missing_operational_capability(capability.missing_behavior, is_required),
+            },
+            None => missing_operational_capability(capability.missing_behavior, is_required),
+        };
+
+        let item = PreparedCapability {
+            capability_id: capability.id.clone(),
+            capability_type: capability.kind.clone(),
+            reason: format!(
+                "{} matched the normalized project context.",
+                capability.label
+            ),
+            status,
+            evidence_ref,
+        };
+        actions.push(BootstrapAction {
+            capability_id: capability.id.clone(),
+            action: action.into(),
+            reason: action_reason.into(),
+        });
+        if let Some(record) = found {
+            evidence_rows.extend(record.evidence.clone());
+        }
+        provenance.push(format!("{}:environment-evidence", capability.id));
+        if is_required {
+            required.push(item);
+        } else {
+            recommended.push(item);
+        }
+    }
 
     let excluded = [
         ("gstack", "WORKFLOW", "DO_NOT_INSTALL remains in force."),
@@ -833,8 +911,72 @@ mod tests {
             .gaps
             .iter()
             .any(|item| item.capability_id == "gap-browser-visual-qa"));
+
+        let node = result
+            .recommended_capabilities
+            .iter()
+            .find(|item| item.capability_id == "node-runtime")
+            .expect("JavaScript should map generically to Node.js runtime support");
+        assert_eq!(node.status, CapabilityStatus::NoEvidence);
+        let browser_qa = result
+            .recommended_capabilities
+            .iter()
+            .find(|item| item.capability_id == "playwright-browser-qa")
+            .expect("browser QA should map generically to Playwright support");
+        assert_eq!(browser_qa.status, CapabilityStatus::NoEvidence);
+        assert!(!result
+            .gaps
+            .iter()
+            .any(|item| item.capability_id == "playwright-browser-qa"));
+
         assert_eq!(result.next_operation, "REVIEW_WARNINGS");
         assert!(result.approval_actions.is_empty());
+    }
+
+    #[test]
+    fn factual_present_evidence_changes_registry_matched_capability_to_available() {
+        let mut c = context("browser-qa-proof");
+        c.project_context.existing_stack = vec!["Playwright".into()];
+        c.project_context.connected_services = vec!["local browser QA".into()];
+        c.project_context.existing_capabilities = vec!["git".into()];
+
+        let mut e = evidence_with_git_present();
+        e.observations.push(CapabilityObservations {
+            capability_id: "playwright-browser-qa".into(),
+            observations: vec![
+                EnvironmentObservation {
+                    source_category: EvidenceSourceCategory::CapabilityRegistry,
+                    kind: EvidenceKind::RegistryEntry,
+                    result: EvidenceResult::Present,
+                    version: None,
+                    detail: None,
+                    observed_at: "2026-09-21T10:00:00Z".into(),
+                },
+                EnvironmentObservation {
+                    source_category: EvidenceSourceCategory::CliProbe,
+                    kind: EvidenceKind::CliProbe,
+                    result: EvidenceResult::Present,
+                    version: Some("1.57.0".into()),
+                    detail: None,
+                    observed_at: "2026-09-21T10:00:00Z".into(),
+                },
+            ],
+        });
+
+        let result = prepare_project(&c, &e, &snapshot()).unwrap();
+        let playwright = result
+            .required_capabilities
+            .iter()
+            .find(|item| item.capability_id == "playwright-browser-qa")
+            .expect("explicit Playwright stack should require the capability");
+        assert_eq!(playwright.status, CapabilityStatus::Available);
+        assert!(!result
+            .gaps
+            .iter()
+            .any(|item| item.capability_id == "playwright-browser-qa"));
+        assert!(result.bootstrap_actions.iter().any(|item| {
+            item.capability_id == "playwright-browser-qa" && item.action == "USE_EXISTING"
+        }));
     }
 
     #[test]

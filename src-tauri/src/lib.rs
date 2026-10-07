@@ -5,6 +5,7 @@
 //! in `commands::*`.
 
 mod commands;
+mod capability_registry;
 pub(crate) mod agent_runtime;
 pub(crate) mod local_adapter;
 mod prepared_projects;

@@ -1,0 +1,20 @@
+{
+  "_note": "Digital Flow operational capability registry. This is separate from data/tools.json: tools.json describes agent-consumer/install targets; this file describes capabilities a project may require. Listing a capability never implies availability. Runtime status comes only from factual environment evidence.",
+  "capabilities": [
+    {"id":"git-cli","label":"Git CLI","kind":"CLI","requiredMarkers":["git","version control","repository"],"recommendedMarkers":[],"missingBehavior":"install_approval"},
+    {"id":"node-runtime","label":"Node.js Runtime","kind":"RUNTIME","requiredMarkers":["node.js","nodejs"],"recommendedMarkers":["javascript","typescript"],"missingBehavior":"install_approval"},
+    {"id":"npm-tooling","label":"npm / npx Tooling","kind":"CLI","requiredMarkers":["npm","npx","package.json"],"recommendedMarkers":["node.js","nodejs"],"missingBehavior":"install_approval"},
+    {"id":"python-runtime","label":"Python Runtime","kind":"RUNTIME","requiredMarkers":["python"],"recommendedMarkers":[],"missingBehavior":"install_approval"},
+    {"id":"ffmpeg","label":"FFmpeg","kind":"MEDIA_TOOL","requiredMarkers":["ffmpeg"],"recommendedMarkers":["video production","video editing","media processing"],"missingBehavior":"install_approval"},
+    {"id":"docker","label":"Docker","kind":"RUNTIME","requiredMarkers":["docker","containerized","container"],"recommendedMarkers":[],"missingBehavior":"install_approval"},
+    {"id":"vercel-cli","label":"Vercel CLI","kind":"DEPLOYMENT_TOOL","requiredMarkers":["vercel"],"recommendedMarkers":[],"missingBehavior":"install_approval"},
+    {"id":"supabase-service","label":"Supabase","kind":"SERVICE","requiredMarkers":["supabase"],"recommendedMarkers":[],"missingBehavior":"connect_approval"},
+    {"id":"resend-service","label":"Resend","kind":"SERVICE","requiredMarkers":["resend"],"recommendedMarkers":[],"missingBehavior":"connect_approval"},
+    {"id":"playwright-browser-qa","label":"Playwright Browser QA","kind":"QA_TOOL","requiredMarkers":["playwright"],"recommendedMarkers":["browser qa","visual qa","qa evidence","interaction qa"],"missingBehavior":"install_approval"},
+    {"id":"remotion-video","label":"Remotion Video","kind":"MEDIA_WORKFLOW","requiredMarkers":["remotion"],"recommendedMarkers":["programmatic video","react video"],"missingBehavior":"gap"},
+    {"id":"capcut-video-editing","label":"CapCut Video Editing","kind":"MEDIA_WORKFLOW","requiredMarkers":["capcut"],"recommendedMarkers":["short-form video","reel editing","video editing"],"missingBehavior":"gap"},
+    {"id":"social-content-production","label":"Social Content Production","kind":"WORKFLOW","requiredMarkers":["social content production"],"recommendedMarkers":["social media","reels","instagram post","caption production"],"missingBehavior":"gap"},
+    {"id":"image-design-production","label":"Image / Design Production","kind":"WORKFLOW","requiredMarkers":["image design production"],"recommendedMarkers":["visual content","creative production","canva"],"missingBehavior":"gap"},
+    {"id":"static-web-implementation","label":"Static / Custom Web Implementation","kind":"WORKFLOW","requiredMarkers":[],"recommendedMarkers":[],"missingBehavior":"gap"}
+  ]
+}

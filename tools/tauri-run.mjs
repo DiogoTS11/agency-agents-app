@@ -50,6 +50,10 @@ const result = spawnSync(process.execPath, [cli, ...process.argv.slice(2)], {
   env: {
     ...process.env,
     TAURI_CONFIG: JSON.stringify({ app: { macOSPrivateApi } }),
+    // Release guard: src-tauri/build.rs refuses raw Windows release builds
+    // unless they came through this canonical Tauri CLI wrapper. This does
+    // not affect normal cargo test/check/debug workflows.
+    DF_TAURI_CLI_BUILD: "1",
   },
 });
 

@@ -43,6 +43,20 @@ AGENCY_AGENTS_PARITY_ROOT=/Users/michael/Software/AgentLand/agency-agents \
 cargo test --manifest-path src-tauri/Cargo.toml upstream_convert_sh_is_byte_identical_for_transform_tools -- --ignored
 ```
 
+## Windows Desktop Release Guard
+
+Production Windows desktop artifacts must be built through the repo's Tauri CLI wrapper:
+
+```powershell
+npm run tauri -- build --no-bundle
+```
+
+Do **not** promote an executable produced by `cargo build --release`. A raw Cargo release can compile without Tauri's production asset/config pipeline and may open the development URL (`http://localhost:1430`) instead of the embedded frontend.
+
+`src-tauri/build.rs` therefore rejects raw Windows release builds unless they came through `tools/tauri-run.mjs`. The escape hatch `DF_ALLOW_RAW_CARGO_RELEASE=1` exists only for intentional low-level diagnostics; artifacts produced with that override are not desktop release candidates and must not be promoted.
+
+Before promoting a Windows desktop artifact, keep the development server on port `1430` closed and launch the Tauri-built executable standalone.
+
 ## Release Build On macOS
 
 The release build produces a signed `.app` and `.dmg`.

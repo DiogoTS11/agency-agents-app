@@ -938,9 +938,10 @@ pub async fn tools_list(
 ) -> Result<Vec<ToolInfo>, AppError> {
     let ledger = load_ledger(&app).await?;
     let os_home = home()?;
-    let supported = supported();
-    let mut out = Vec::with_capacity(supported.len());
-    for tool in supported {
+    let tools = registry::all();
+    let mut out = Vec::with_capacity(tools.len());
+    for meta in tools {
+        let tool = meta.id.as_str();
         let installed_count = ledger.iter().filter(|r| r.tool == tool).count() as u32;
         // Resolve against the per-tool base so detection + user_dest reflect a
         // custom path (e.g. a WSL home). custom_path exposes the override to the
@@ -1059,9 +1060,10 @@ async fn probe_version(tool: &str) -> Option<String> {
 /// version command) comes back as `version: None` — the UI just omits it.
 #[tauri::command]
 pub async fn tool_versions() -> Result<Vec<ToolVersion>, AppError> {
-    let supported = supported();
-    let mut handles = Vec::with_capacity(supported.len());
-    for tool in supported {
+    let tools = registry::all();
+    let mut handles = Vec::with_capacity(tools.len());
+    for meta in tools {
+        let tool = meta.id.as_str();
         handles.push(tokio::spawn(
             async move { ToolVersion {
                 tool: tool.to_string(),

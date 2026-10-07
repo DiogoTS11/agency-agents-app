@@ -395,17 +395,25 @@ fn validated_roster(snapshot: &CorpusSnapshot) -> Result<Vec<RosterAgent>, Runti
     Ok(roster)
 }
 
-fn missing_capability_action(required: bool) -> (&'static str, &'static str) {
-    if required {
-        (
-            "INSTALL_REQUIRES_APPROVAL",
-            "No existing registry entry or environment evidence — this would be a net-new capability, gated behind explicit human approval.",
-        )
-    } else {
-        (
+fn missing_capability_action(
+    required: bool,
+    behavior: MissingBehavior,
+) -> (&'static str, &'static str) {
+    if !required {
+        return (
             "NO_ACTION",
             "No existing evidence, and not required for this project — not recommended from zero evidence.",
-        )
+        );
+    }
+    match behavior {
+        MissingBehavior::ConnectApproval => (
+            "CONNECT_REQUIRES_APPROVAL",
+            "No existing registry entry or environment evidence — this would be a net-new service connection, gated behind explicit human approval.",
+        ),
+        _ => (
+            "INSTALL_REQUIRES_APPROVAL",
+            "No existing registry entry or environment evidence — this would be a net-new capability, gated behind explicit human approval.",
+        ),
     }
 }
 
@@ -431,7 +439,7 @@ fn missing_operational_capability(
         );
     }
 
-    let (action, reason) = missing_capability_action(true);
+    let (action, reason) = missing_capability_action(true, behavior);
     (CapabilityStatus::NoEvidence, action, reason, None)
 }
 
@@ -986,23 +994,23 @@ mod tests {
         assert!(result.gaps.iter().any(|item| item.capability_id == "gap-custom-frontend"));
         assert!(result.stale_states.iter().any(|item| item.id == "vercel-cli"));
         assert!(result.bootstrap_actions.iter().any(|item| item.action == "RESOLVE_STALE_STATE"));
-        assert_eq!(result.approval_actions.iter().filter(|item| item.action == "INSTALL_REQUIRES_APPROVAL").count(), 2);
-        assert!(result.bootstrap_actions.iter().filter(|item| item.action == "INSTALL_REQUIRES_APPROVAL").count() == 2);
+        assert_eq!(result.approval_actions.iter().filter(|item| item.action == "CONNECT_REQUIRES_APPROVAL").count(), 2);
+        assert!(result.bootstrap_actions.iter().filter(|item| item.action == "CONNECT_REQUIRES_APPROVAL").count() == 2);
         assert_eq!(result.next_operation, "REQUEST_APPROVAL");
     }
 
     #[test]
-    fn required_no_evidence_generates_visible_install_approval() {
+    fn required_no_evidence_generates_visible_connect_approval() {
         let result = prepare_project(&required_service_context("Supabase"), &evidence(), &snapshot()).unwrap();
         let capability = result.required_capabilities.iter().find(|item| item.capability_id == "supabase-service").unwrap();
         assert_eq!(capability.status, CapabilityStatus::NoEvidence);
         assert_eq!(result.approval_actions.iter().filter(|item| item.capability_id == "supabase-service").count(), 1);
-        assert!(result.bootstrap_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "INSTALL_REQUIRES_APPROVAL"));
+        assert!(result.bootstrap_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "CONNECT_REQUIRES_APPROVAL"));
         assert_eq!(result.next_operation, "REQUEST_APPROVAL");
     }
 
     #[test]
-    fn required_canonical_missing_generates_install_approval_without_installing() {
+    fn required_canonical_missing_generates_connect_approval_without_connecting() {
         let mut environment = evidence();
         environment.observations.push(CapabilityObservations {
             capability_id: "supabase-service".into(),
@@ -1018,14 +1026,14 @@ mod tests {
         let result = prepare_project(&required_service_context("Supabase"), &environment, &snapshot()).unwrap();
         let capability = result.required_capabilities.iter().find(|item| item.capability_id == "supabase-service").unwrap();
         assert_eq!(capability.status, CapabilityStatus::NoEvidence);
-        assert!(result.approval_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "INSTALL_REQUIRES_APPROVAL"));
-        assert!(!result.bootstrap_actions.iter().any(|item| item.action == "INSTALL"));
+        assert!(result.approval_actions.iter().any(|item| item.capability_id == "supabase-service" && item.action == "CONNECT_REQUIRES_APPROVAL"));
+        assert!(!result.bootstrap_actions.iter().any(|item| item.action == "CONNECT"));
     }
 
     #[test]
     fn optional_no_evidence_does_not_inherit_required_install_approval() {
-        assert_eq!(missing_capability_action(false).0, "NO_ACTION");
-        assert_ne!(missing_capability_action(false).0, "INSTALL_REQUIRES_APPROVAL");
+        assert_eq!(missing_capability_action(false, MissingBehavior::InstallApproval).0, "NO_ACTION");
+        assert_ne!(missing_capability_action(false, MissingBehavior::InstallApproval).0, "INSTALL_REQUIRES_APPROVAL");
     }
 
     #[test]

@@ -23,19 +23,23 @@ use tokio::{
     net::TcpListener,
     sync::{oneshot, Mutex},
     task::JoinHandle,
+    time::timeout,
 };
 use uuid::Uuid;
 
 use crate::{
     agent_runtime::{
-        self, BootstrapAction, CorpusEvidence, DiscoveryRecord, EnvironmentEvidence,
-        PreparationResult, PreparedCapability, ProjectContext, ProjectContextFields, RuntimeError,
-        PREPARE_PROJECT_CONTRACT_VERSION,
+        self, BootstrapAction, CapabilityObservations, CorpusEvidence, DiscoveryRecord,
+        EnvironmentEvidence, EnvironmentObservation, EvidenceKind, EvidenceResult,
+        EvidenceSourceCategory, PreparationResult, PreparedCapability, ProjectContext,
+        ProjectContextFields, RuntimeError, PREPARE_PROJECT_CONTRACT_VERSION,
     },
+    capability_registry::{self, CapabilityProbe},
     corpus,
     error::AppError,
     github::auth::{KeychainSlot, SystemKeychain},
     prepared_projects,
+    util::process::headless_tokio_command,
 };
 
 pub const LOOPBACK_HOST: &str = "127.0.0.1";
@@ -43,6 +47,7 @@ pub const AUTH_REF: &str = "agent-agency-runtime-v1";
 pub const CONTRACT_VERSION: &str = PREPARE_PROJECT_CONTRACT_VERSION;
 const MAX_REQUEST_BYTES: usize = 1_048_576;
 const DEFAULT_CORPUS_MAX_AGE_SECONDS: i64 = 86_400;
+const LOCAL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_500);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RuntimeDescriptor {
@@ -330,6 +335,164 @@ async fn serve(listener: TcpListener, state: AdapterState, shutdown: oneshot::Re
         .await;
 }
 
+#[derive(Debug)]
+enum LocalProbeOutcome {
+    Present(Option<String>),
+    Absent,
+    Failed(String),
+}
+
+async fn augment_with_local_capability_evidence(evidence: &mut EnvironmentEvidence) {
+    let mut handles = Vec::new();
+    for capability in capability_registry::all() {
+        let Some(probe) = capability.probe.clone() else { continue };
+        let capability_id = capability.id.clone();
+        handles.push(tokio::spawn(async move {
+            (capability_id, probe_capability_observations(&probe).await)
+        }));
+    }
+
+    for category in [
+        EvidenceSourceCategory::CapabilityRegistry,
+        EvidenceSourceCategory::CliProbe,
+    ] {
+        if !evidence.source_categories_consulted.contains(&category) {
+            evidence.source_categories_consulted.push(category);
+        }
+    }
+
+    for handle in handles {
+        let Ok((capability_id, observations)) = handle.await else { continue };
+        if let Some(existing) = evidence
+            .observations
+            .iter_mut()
+            .find(|group| group.capability_id == capability_id)
+        {
+            existing.observations.extend(observations);
+            existing.observations.truncate(16);
+        } else {
+            evidence.observations.push(CapabilityObservations {
+                capability_id,
+                observations,
+            });
+        }
+    }
+}
+
+async fn probe_capability_observations(probe: &CapabilityProbe) -> Vec<EnvironmentObservation> {
+    let observed_at = Utc::now().to_rfc3339();
+    let registry_observation = EnvironmentObservation {
+        source_category: EvidenceSourceCategory::CapabilityRegistry,
+        kind: EvidenceKind::RegistryEntry,
+        result: EvidenceResult::Present,
+        version: None,
+        detail: None,
+        observed_at: observed_at.clone(),
+    };
+    let probe_observation = match timeout(LOCAL_PROBE_TIMEOUT, spawn_probe(probe)).await {
+        Ok(LocalProbeOutcome::Present(version)) => EnvironmentObservation {
+            source_category: EvidenceSourceCategory::CliProbe,
+            kind: EvidenceKind::CliProbe,
+            result: EvidenceResult::Present,
+            version,
+            detail: None,
+            observed_at,
+        },
+        Ok(LocalProbeOutcome::Absent) => EnvironmentObservation {
+            source_category: EvidenceSourceCategory::CliProbe,
+            kind: EvidenceKind::CliProbe,
+            result: EvidenceResult::Absent,
+            version: None,
+            detail: Some(format!("local CLI not found: {}", probe.bin)),
+            observed_at,
+        },
+        Ok(LocalProbeOutcome::Failed(detail)) => EnvironmentObservation {
+            source_category: EvidenceSourceCategory::CliProbe,
+            kind: EvidenceKind::CliProbe,
+            result: EvidenceResult::ProbeFailed,
+            version: None,
+            detail: Some(detail),
+            observed_at,
+        },
+        Err(_) => EnvironmentObservation {
+            source_category: EvidenceSourceCategory::CliProbe,
+            kind: EvidenceKind::CliProbe,
+            result: EvidenceResult::ProbeFailed,
+            version: None,
+            detail: Some("local CLI probe timed out".into()),
+            observed_at,
+        },
+    };
+    vec![registry_observation, probe_observation]
+}
+
+async fn spawn_probe(probe: &CapabilityProbe) -> LocalProbeOutcome {
+    let mut command = headless_tokio_command(&probe.bin);
+    crate::util::proc::sanitize_tokio(&mut command);
+    command.args(&probe.args);
+
+    let output = match command.output().await {
+        Ok(output) => output,
+        Err(error) if cfg!(windows) && error.kind() == std::io::ErrorKind::NotFound => {
+            let mut where_cmd = headless_tokio_command("where.exe");
+            crate::util::proc::sanitize_tokio(&mut where_cmd);
+            where_cmd.arg(&probe.bin);
+            match where_cmd.output().await {
+                Ok(output) if !output.status.success() => return LocalProbeOutcome::Absent,
+                Ok(_) => {}
+                Err(where_error) => {
+                    return LocalProbeOutcome::Failed(format!(
+                        "could not resolve local CLI {}: {}",
+                        probe.bin, where_error
+                    ));
+                }
+            }
+
+            let mut fallback = headless_tokio_command("cmd.exe");
+            crate::util::proc::sanitize_tokio(&mut fallback);
+            fallback.args(["/D", "/S", "/C", probe.bin.as_str()]);
+            fallback.args(&probe.args);
+            match fallback.output().await {
+                Ok(output) => output,
+                Err(fallback_error) => {
+                    return LocalProbeOutcome::Failed(format!(
+                        "local CLI probe failed for {}: {}",
+                        probe.bin, fallback_error
+                    ));
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return LocalProbeOutcome::Absent;
+        }
+        Err(error) => {
+            return LocalProbeOutcome::Failed(format!(
+                "local CLI probe failed for {}: {}",
+                probe.bin, error
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        return LocalProbeOutcome::Failed(format!(
+            "local CLI probe for {} exited with {}",
+            probe.bin, output.status
+        ));
+    }
+
+    let version = first_probe_line(&output.stdout)
+        .or_else(|| first_probe_line(&output.stderr));
+    LocalProbeOutcome::Present(version)
+}
+
+fn first_probe_line(bytes: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(256).collect())
+}
+
 async fn prepare_project(
     State(state): State<AdapterState>,
     headers: HeaderMap,
@@ -375,6 +538,8 @@ async fn prepare_project(
         );
     }
 
+    let mut environment_evidence = request.environment_evidence;
+    augment_with_local_capability_evidence(&mut environment_evidence).await;
     let context = ProjectContext {
         project_id: request.project_id,
         project_context: request.project_context,
@@ -390,7 +555,7 @@ async fn prepare_project(
         Err(error) => return map_app_error(error),
     };
     let result =
-        match agent_runtime::prepare_project(&context, &request.environment_evidence, &snapshot) {
+        match agent_runtime::prepare_project(&context, &environment_evidence, &snapshot) {
             Ok(result) => result,
             Err(error) => return map_runtime_error(error),
         };
@@ -798,6 +963,69 @@ mod tests {
             map_runtime_error(RuntimeError::RosterIncomplete("missing".into())).status(),
             StatusCode::UNPROCESSABLE_ENTITY
         );
+    }
+
+    #[tokio::test]
+    async fn local_probe_distinguishes_present_absent_and_failed() {
+        let current_exe = std::env::current_exe().unwrap();
+        let present = CapabilityProbe {
+            bin: current_exe.to_string_lossy().into_owned(),
+            args: vec!["--list".into()],
+        };
+        assert!(matches!(
+            spawn_probe(&present).await,
+            LocalProbeOutcome::Present(_)
+        ));
+
+        let absent = CapabilityProbe {
+            bin: "df-ag-agency-command-that-does-not-exist-9f8e7d6c".into(),
+            args: Vec::new(),
+        };
+        assert!(matches!(
+            spawn_probe(&absent).await,
+            LocalProbeOutcome::Absent
+        ));
+
+        let failed = CapabilityProbe {
+            bin: current_exe.to_string_lossy().into_owned(),
+            args: vec!["--definitely-invalid-libtest-option".into()],
+        };
+        assert!(matches!(
+            spawn_probe(&failed).await,
+            LocalProbeOutcome::Failed(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn local_capability_augmentation_adds_registry_and_cli_evidence() {
+        let mut evidence = EnvironmentEvidence {
+            evidence_schema_version: "1.0.0".into(),
+            generated_at: Utc::now().to_rfc3339(),
+            source_categories_consulted: vec![EvidenceSourceCategory::CapabilityMap],
+            observations: Vec::new(),
+        };
+
+        augment_with_local_capability_evidence(&mut evidence).await;
+
+        assert!(evidence
+            .source_categories_consulted
+            .contains(&EvidenceSourceCategory::CapabilityRegistry));
+        assert!(evidence
+            .source_categories_consulted
+            .contains(&EvidenceSourceCategory::CliProbe));
+
+        let playwright = evidence
+            .observations
+            .iter()
+            .find(|group| group.capability_id == "playwright-browser-qa")
+            .expect("playwright capability must be locally evaluated");
+        assert!(playwright.observations.iter().any(|observation| {
+            observation.source_category == EvidenceSourceCategory::CapabilityRegistry
+                && observation.result == EvidenceResult::Present
+        }));
+        assert!(playwright.observations.iter().any(|observation| {
+            observation.source_category == EvidenceSourceCategory::CliProbe
+        }));
     }
 
     #[tokio::test]

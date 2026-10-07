@@ -21,6 +21,13 @@ pub enum MissingBehavior {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct CapabilityProbe {
+    pub bin: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityMeta {
     pub id: String,
@@ -31,6 +38,8 @@ pub struct CapabilityMeta {
     #[serde(default)]
     pub recommended_markers: Vec<String>,
     pub missing_behavior: MissingBehavior,
+    #[serde(default)]
+    pub probe: Option<CapabilityProbe>,
 }
 
 #[derive(Deserialize)]

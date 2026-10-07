@@ -71,9 +71,9 @@
     }
   });
 
-  // The list is the WHOLE registry (all 12 tools), overlaid with backend
-  // detection/scope for the wired ones. Non-wired tools (recognized upstream but
-  // no native renderer yet) show as a dimmed "not yet installable" row.
+  // The list is the WHOLE registry, overlaid with backend detection for every
+  // recognized tool. Installability is a separate concern: non-wired tools may
+  // still be detected/versioned even though this app cannot install into them.
   type ToolRow = ToolInfo & { wired: boolean };
   const tools = $derived.by<ToolRow[]>(() =>
     TOOLS.map((m) => {
@@ -105,10 +105,10 @@
       /* ignore */
     }
   }
-  /** A tool counts as "installed/discovered" if its config dir is present on
-      this machine, or we already have agents deployed in it. */
+  /** A tool counts as present when any factual local evidence exists:
+      config dir, version probe, or reconciled agent files. */
   function toolPresent(t: ToolInfo): boolean {
-    return t.detected || health(t.tool).total > 0;
+    return t.detected || install.versionOf(t.tool) != null || health(t.tool).total > 0;
   }
   const TLENS: { id: ToolLens; key: MessageKey }[] = [
     { id: "installed", key: "tools.lens.installed" },
@@ -380,12 +380,12 @@
         {@const ver = install.versionOf(t.tool)}
         {@const inst = installedCount(t.tool)}
         <li>
-          <button class="trow" class:sel={selectedTool === t.tool} class:dim={!t.detected && h.total === 0} onclick={() => { selectedTool = t.tool; ui.toolsSelected = t.tool; }}>
+          <button class="trow" class:sel={selectedTool === t.tool} class:dim={!toolPresent(t)} onclick={() => { selectedTool = t.tool; ui.toolsSelected = t.tool; }}>
             <span class="badge" style="--accent:{toolAccent(t.tool)}">{#if toolIcon(t.tool)}<span class="glyph">{@html toolIcon(t.tool)}</span>{:else}{toolMark(t.label)}{/if}</span>
             <span class="trow-id">
               <span class="trow-top">
                 <span class="trow-name">{t.label}</span>
-                {#if t.wired}<span class="c-dot" class:on={t.detected} title={t.detected ? i18n.t("common.detected") : i18n.t("common.notDetected")}></span>{/if}
+                <span class="c-dot" class:on={toolPresent(t)} title={toolPresent(t) ? i18n.t("common.detected") : i18n.t("common.notDetected")}></span>
               </span>
               {#if t.wired}
                 <span class="hbar" title={i18n.t("tools.hbarTitle", { installed: inst, total: catalogTotal })}>
@@ -396,7 +396,9 @@
                   {h.total > 0 ? i18n.count(h.total, "common.agent.one", "common.agent.many") : i18n.t("common.noAgents")}{#if ver} · <span class="trow-ver" title={ver}>{ver}</span>{/if}
                 </span>
               {:else}
-                <span class="trow-sub recognized">{i18n.t("tools.recognizedSub")}</span>
+                <span class="trow-sub recognized">
+                  {i18n.t("tools.recognizedSub")}{#if ver} · <span class="trow-ver" title={ver}>{ver}</span>{/if}
+                </span>
               {/if}
             </span>
           </button>
@@ -429,7 +431,7 @@
             <span class="con-meta">
               {sel.scope === "user" ? i18n.t("tools.userGlobal") : i18n.t("tools.projectScoped")}
               {#if install.versionOf(sel.tool)}· {install.versionOf(sel.tool)}{/if}
-              {#if !sel.detected}· <span class="warn">{i18n.t("common.notDetected")}</span>{/if}
+              {#if !toolPresent(sel)}· <span class="warn">{i18n.t("common.notDetected")}</span>{/if}
               {#if sel.customPath}· <span class="cust" title={sel.customPath}>{i18n.t("tools.customLocation")}</span>{/if}
             </span>
           </div>

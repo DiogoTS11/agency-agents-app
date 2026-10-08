@@ -521,6 +521,31 @@ fn build_profile(context: &ProjectContext, discovery: &[DiscoveryRecord], roster
     ].join(" ").to_lowercase();
     let has = |markers: &[&str]| markers.iter().any(|marker| signal_text.contains(marker));
 
+    let product_opportunity = has(&[
+        "product opportunity", "new product", "product idea", "opportunity assessment",
+        "business hypothesis", "product discovery",
+    ]);
+    if product_opportunity {
+        push_agent_requirement(
+            roster, &mut required, &mut recommended, &mut actions, &mut provenance,
+            "product-manager",
+            "The declared work evaluates or frames a product opportunity.",
+            true,
+        );
+    }
+
+    if product_opportunity && has(&[
+        "evidence gap", "research question", "market research", "customer research",
+        "competitor research", "demand evidence", "pricing evidence",
+    ]) {
+        push_agent_requirement(
+            roster, &mut required, &mut recommended, &mut actions, &mut provenance,
+            "research-synthesist",
+            "The product opportunity declares an evidence gap that requires targeted research.",
+            true,
+        );
+    }
+
     let web_project = has(&["website", "landing", "web page", "frontend", "html", "css", "responsive", "ui", "next.js"]);
     let cms_web = has(&["wordpress", "drupal"]);
     let custom_web = web_project && (has(&["static html", "html", "javascript", "next.js", "custom", "non-cms"]) || !cms_web);
@@ -810,6 +835,28 @@ mod tests {
         assert_eq!(git.status, CapabilityStatus::Verify);
         assert!(!result.gaps.iter().any(|item| item.capability_id == "git-cli"));
         assert!(result.bootstrap_actions.iter().any(|item| item.capability_id == "git-cli" && item.action == "VERIFY"));
+    }
+
+    #[test]
+    fn product_opportunity_selects_product_manager_but_does_not_route_research_without_an_evidence_gap() {
+        let mut c = context("product-opportunity");
+        c.project_context.project_type = "internal product opportunity assessment".into();
+        c.project_context.objective_or_problem = "Evaluate a new product opportunity and state the business hypothesis.".into();
+        let result = prepare_project(&c, &evidence(), &snapshot()).unwrap();
+        let selected: BTreeSet<_> = result.agents.iter().map(|item| item.capability_id.as_str()).collect();
+        assert!(selected.contains("product-manager"));
+        assert!(!selected.contains("research-synthesist"));
+    }
+
+    #[test]
+    fn product_opportunity_routes_research_synthesist_when_an_evidence_gap_is_declared() {
+        let mut c = context("product-opportunity-research");
+        c.project_context.project_type = "internal product opportunity assessment".into();
+        c.project_context.objective_or_problem = "Evaluate a new product opportunity and resolve a demand evidence gap.".into();
+        let result = prepare_project(&c, &evidence(), &snapshot()).unwrap();
+        let selected: BTreeSet<_> = result.agents.iter().map(|item| item.capability_id.as_str()).collect();
+        assert!(selected.contains("product-manager"));
+        assert!(selected.contains("research-synthesist"));
     }
 
     #[test]

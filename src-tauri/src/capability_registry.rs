@@ -129,6 +129,7 @@ mod tests {
             "supabase-service",
             "resend-service",
             "playwright-browser-qa",
+            "artemis-android-qa",
             "remotion-video",
             "capcut-video-editing",
             "social-content-production",
@@ -139,6 +140,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn artemis_qa_only_routes_for_android_scope_and_does_not_require_ordinary_web_apps() {
+        let artemis = all().iter().find(|item| item.id == "artemis-android-qa").unwrap();
+        assert_eq!(artemis.requirement_for("Build Android app and verify login"), Some(false));
+        assert_eq!(artemis.requirement_for("APK testing on an emulator"), Some(false));
+        assert_eq!(artemis.requirement_for("Run Artemis mobile QA"), Some(true));
+        assert_eq!(artemis.requirement_for("Build a WordPress website with browser QA"), None);
+        assert_eq!(artemis.requirement_for("Create an iOS app"), None);
+        assert!(artemis.probe.is_none(), "isolated runtime must not pretend a global CLI probe exists");
+    }
     #[test]
     fn short_markers_are_token_matched_not_substring_matched() {
         assert!(marker_matches("Git repository", "git"));

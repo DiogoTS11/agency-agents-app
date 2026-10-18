@@ -32,3 +32,8 @@ Keep these domains separate:
 - **Environment evidence** = factual proof of what exists on the authorized machine.
 
 Do not encode secrets, auth values, provider tokens, cookies, local credentials, or client-sensitive configuration in either registry.
+## ARTEMIS Android QA (pilot, 2026-10-18)
+
+`artemis-android-qa` is an **optional operational capability**, not an agent, not an IDE install target and not proof that a device or model is available. `prepare-project` recommends it for Android/APK work and does not route it for websites or iOS-only work. An explicit Artemis request marks it required; missing runtime evidence still requires approval.
+
+Digital Flow OS controls governance in `DigitalFlow/docs/command-center/digital-flow-os-capability-map.md` and tracks the pilot in [DigitalFlow issue #183](https://github.com/DiogoTS11/DigitalFlow/issues/183). The local pilot has passed Python/MCP/UI checks only. **Do not auto-execute** `mobile_run_task`, install global IDE MCP/rules, authorize a device, install Accessibility Helper, call paid models or claim real Android QA. A test needs a connected authorized Android device/emulator, verified costs and a scoped agent integration with rollback. Actual availability must come from factual `EnvironmentEvidence` after approval.

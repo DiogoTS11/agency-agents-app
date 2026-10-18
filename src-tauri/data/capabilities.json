@@ -11,6 +11,7 @@
     {"id":"supabase-service","label":"Supabase","kind":"SERVICE","requiredMarkers":["supabase"],"recommendedMarkers":[],"missingBehavior":"connect_approval"},
     {"id":"resend-service","label":"Resend","kind":"SERVICE","requiredMarkers":["resend"],"recommendedMarkers":[],"missingBehavior":"connect_approval"},
     {"id":"playwright-browser-qa","label":"Playwright Browser QA","kind":"QA_TOOL","requiredMarkers":["playwright"],"recommendedMarkers":["browser qa","visual qa","qa evidence","interaction qa"],"missingBehavior":"install_approval","probe":{"bin":"playwright","args":["--version"]}},
+    {"id":"artemis-android-qa","label":"ARTEMIS Android Mobile QA","kind":"QA_TOOL","requiredMarkers":["artemis","artemis mobile qa"],"recommendedMarkers":["android app","android testing","android qa","android emulator","android automation","apk testing","apk"],"missingBehavior":"install_approval"},
     {"id":"remotion-video","label":"Remotion Video","kind":"MEDIA_WORKFLOW","requiredMarkers":["remotion"],"recommendedMarkers":["programmatic video","react video"],"missingBehavior":"gap"},
     {"id":"capcut-video-editing","label":"CapCut Video Editing","kind":"MEDIA_WORKFLOW","requiredMarkers":["capcut"],"recommendedMarkers":["short-form video","reel editing","video editing"],"missingBehavior":"gap"},
     {"id":"social-content-production","label":"Social Content Production","kind":"WORKFLOW","requiredMarkers":["social content production"],"recommendedMarkers":["social media","reels","instagram post","caption production"],"missingBehavior":"gap"},
